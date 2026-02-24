@@ -1,1 +1,1 @@
-**TODO**
+Use correct CMake preset. In order to do that, you need to choose preset "dev-macos" or "dev-windows" in cmake settings.

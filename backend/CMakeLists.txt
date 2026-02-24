@@ -1,5 +1,9 @@
+find_package(Drogon CONFIG REQUIRED)
+
 add_executable(backend_app
         src/main.cpp
 )
 
-### target_include_directories(backend_app PRIVATE include) later
+target_link_libraries(backend_app PRIVATE
+        Drogon::Drogon
+)

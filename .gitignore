@@ -1,6 +1,7 @@
 # Build dirs
 build/
 cmake-build-*/
+cmake-dev-build-*/
 out/
 
 # CMake
