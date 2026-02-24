@@ -1,0 +1,24 @@
+# Build dirs
+build/
+cmake-build-*/
+out/
+
+# CMake
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+Makefile
+compile_commands.json
+
+# IDEs
+.vscode/
+.idea/
+*.user
+*.user.*
+*.creator
+*.creator.user
+*.qmlproject.user
+
+# OS
+.DS_Store
+Thumbs.db
