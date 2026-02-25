@@ -31,13 +31,33 @@ jobs:
         if: runner.os == 'macOS'
         run: brew install ninja
 
-      - name: Install Ninja (Windows)
+      - name: Setup MSYS2 (MinGW64)
         if: runner.os == 'Windows'
-        run: choco install ninja -y
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: >-
+            mingw-w64-x86_64-toolchain
+            mingw-w64-x86_64-ninja
+
+      - name: Add MinGW64 to PATH
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          "C:\msys64\mingw64\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
 
       - name: Ensure Homebrew bin in PATH (macOS)
         if: runner.os == 'macOS'
         run: echo "$(brew --prefix)/bin" >> $GITHUB_PATH
+
+      #not sure if I need that now
+      - name: Install Ninja (Windows)
+        if: runner.os == 'Windows'
+        run: choco install ninja -y
+
+      - name: Check Ninja
+        run: ninja --version
 
       - name: Prepare vcpkg cache dir (Linux/macOS)
         if: runner.os != 'Windows'
@@ -48,14 +68,26 @@ jobs:
         shell: pwsh
         run: New-Item -ItemType Directory -Force .vcpkg-bincache | Out-Null
 
-      - name: Check Ninja
-        run: ninja --version
-
-      - name: Cache vcpkg binary cache
+      - name: Cache vcpkg binary cache (Linux)
+        if: runner.os == 'Linux'
         uses: actions/cache@v4
         with:
           path: .vcpkg-bincache
-          key: vcpkg-${{ runner.os }}-${{ hashFiles('vcpkg.json') }}
+          key: vcpkg-Linux-x64-linux-${{ hashFiles('vcpkg.json') }}
+
+      - name: Cache vcpkg binary cache (macOS)
+        if: runner.os == 'macOS'
+        uses: actions/cache@v4
+        with:
+          path: .vcpkg-bincache
+          key: vcpkg-macOS-arm64-osx-${{ hashFiles('vcpkg.json') }}
+
+      - name: Cache vcpkg binary cache (Windows)
+        if: runner.os == 'Windows'
+        uses: actions/cache@v4
+        with:
+          path: .vcpkg-bincache
+          key: vcpkg-Windows-x64-mingw-dynamic-${{ hashFiles('vcpkg.json') }}
 
       - name: Bootstrap vcpkg (Linux/macOS)
         if: runner.os != 'Windows'
@@ -81,14 +113,16 @@ jobs:
           -DCMAKE_TOOLCHAIN_FILE=${{ github.workspace }}/extern/vcpkg/scripts/buildsystems/vcpkg.cmake
           -DVCPKG_TARGET_TRIPLET=arm64-osx
 
-      - name: Configure (Windows)
+      - name: Configure (Windows / MinGW)
         if: runner.os == 'Windows'
         shell: pwsh
-        run: >
-          cmake -S . -B $env:BUILD_DIR -G Ninja
-          -DCMAKE_BUILD_TYPE=Debug
-          -DCMAKE_TOOLCHAIN_FILE=${{ github.workspace }}\extern\vcpkg\scripts\buildsystems\vcpkg.cmake
-          -DVCPKG_TARGET_TRIPLET=x64-windows
+        run: |
+          cmake -S . -B $env:BUILD_DIR -G Ninja `
+            -DCMAKE_BUILD_TYPE=Debug `
+            -DCMAKE_C_COMPILER=gcc `
+            -DCMAKE_CXX_COMPILER=g++ `
+            -DCMAKE_TOOLCHAIN_FILE="${{ github.workspace }}\extern\vcpkg\scripts\buildsystems\vcpkg.cmake" `
+            -DVCPKG_TARGET_TRIPLET=x64-mingw-dynamic
 
       - name: Build
         run: cmake --build ${{ env.BUILD_DIR }} --config Debug
