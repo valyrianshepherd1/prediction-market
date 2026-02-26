@@ -143,7 +143,7 @@ jobs:
             -DCMAKE_MAKE_PROGRAM="$env:MSYS2_LOCATION/mingw64/bin/ninja.exe" `
             -DCMAKE_C_COMPILER=gcc `
             -DCMAKE_CXX_COMPILER=g++ `
-            -DQt6_DIR="C:/msys64/mingw64/lib/cmake/Qt6" `
+            -DQt6_DIR="$env:MSYS2_LOCATION/mingw64/lib/cmake/Qt6" `
             -DCMAKE_TOOLCHAIN_FILE="${{ github.workspace }}\extern\vcpkg\scripts\buildsystems\vcpkg.cmake" `
             -DVCPKG_TARGET_TRIPLET=x64-mingw-dynamic
 
