@@ -1,5 +1,5 @@
 {
-  "name": "prediction_market",
+  "name": "prediction-market",
   "version-string": "0.1.0",
   "dependencies": [
     "drogon"
