@@ -23,6 +23,10 @@ jobs:
         with:
           submodules: recursive
 
+      - name: Get vcpkg commit
+        shell: bash
+        run: echo "VCPKG_COMMIT=$(git -C extern/vcpkg rev-parse HEAD)" >> $GITHUB_ENV
+
       - name: Install Ninja (Linux)
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y ninja-build
@@ -51,11 +55,6 @@ jobs:
         if: runner.os == 'macOS'
         run: echo "$(brew --prefix)/bin" >> $GITHUB_PATH
 
-      #not sure if I need that now
-      - name: Install Ninja (Windows)
-        if: runner.os == 'Windows'
-        run: choco install ninja -y
-
       - name: Check Ninja
         run: ninja --version
 
@@ -67,6 +66,14 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: New-Item -ItemType Directory -Force .vcpkg-bincache | Out-Null
+
+      - name: Cache vcpkg downloads
+        uses: actions/cache@v4
+        with:
+          path: extern/vcpkg/downloads
+          key: vcpkg-downloads-${{ runner.os }}-${{ env.VCPKG_COMMIT }}
+          restore-keys: |
+            vcpkg-downloads-${{ runner.os }}-
 
       - name: Cache vcpkg binary cache (Linux)
         if: runner.os == 'Linux'
@@ -87,7 +94,10 @@ jobs:
         uses: actions/cache@v4
         with:
           path: .vcpkg-bincache
-          key: vcpkg-Windows-x64-mingw-dynamic-${{ hashFiles('vcpkg.json') }}
+          key: vcpkg-Windows-x64-mingw-dynamic-${{ env.VCPKG_COMMIT }}-${{ hashFiles('vcpkg.json') }}
+          restore-keys: |
+            vcpkg-Windows-x64-mingw-dynamic-${{ env.VCPKG_COMMIT }}-
+            vcpkg-Windows-x64-mingw-dynamic-
 
       - name: Bootstrap vcpkg (Linux/macOS)
         if: runner.os != 'Windows'
