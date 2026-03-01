@@ -4,6 +4,9 @@ cmake-build-*/
 cmake-dev-build-*/
 out/
 
+#DB
+deploy/.env
+
 # CMake
 CMakeFiles/
 CMakeCache.txt
