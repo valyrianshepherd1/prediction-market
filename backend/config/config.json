@@ -1,0 +1,18 @@
+{
+  "listeners": [
+    {
+      "address": "0.0.0.0",
+      "port": 8443,
+      "https": true,
+      "cert": "./certs/server.crt",
+      "key": "./certs/server.key"
+    }
+  ],
+  "app": {
+    "threads_num": 0,
+    "log": {
+      "log_path": "./logs",
+      "log_level": "info"
+    }
+  }
+}
