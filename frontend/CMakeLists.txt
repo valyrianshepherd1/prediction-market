@@ -8,6 +8,16 @@ find_package(Qt6 REQUIRED COMPONENTS Widgets Network)
 
 add_executable(frontend_app
         src/main.cpp
+        src/app/MarketWindow.h
+        src/app/MarketWindow.cpp
+        src/ui/HeaderBar.h
+        src/ui/HeaderBar.cpp
+        src/ui/pages/HomePage.h
+        src/ui/pages/HomePage.cpp
+        src/ui/pages/MarketsPage.h
+        src/ui/pages/MarketsPage.cpp
+        src/network/MarketApiClient.h
+        src/network/MarketApiClient.cpp
 )
 
 target_link_libraries(frontend_app PRIVATE Qt6::Widgets Qt6::Network)
