@@ -1,22 +1,25 @@
 #pragma once
 #include <QWidget>
 
-class QLabel;
-class MarketApiClient;
+class QGridLayout;
+class QScrollArea;
 
 class MarketsPage : public QWidget {
     Q_OBJECT
 public:
-    explicit MarketsPage(MarketApiClient *api, QWidget *parent = nullptr);
+    explicit MarketsPage(QWidget *parent = nullptr);
 
-    signals:
-        void backHome();
+    void setDemoMarkets(); // for testing
 
-private slots:
-    void onMarkets(const QString &response);
-    void onError(const QString &message);
+public slots:
+    void setCategory(const QString &category);
 
 private:
-    MarketApiClient *m_api = nullptr;
-    QLabel *m_label = nullptr;
+    void clearCards();
+    void addCard(const QString &q, const QVector<struct OutcomeView> &o, const QString &vol);
+
+    QString m_category;
+    QScrollArea *m_scroll = nullptr;
+    QWidget *m_container = nullptr;
+    QGridLayout *m_grid = nullptr;
 };

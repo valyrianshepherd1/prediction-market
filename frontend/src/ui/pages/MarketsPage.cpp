@@ -1,42 +1,68 @@
 #include "MarketsPage.h"
-#include "../../network/MarketApiClient.h"
+#include "../MarketCardWidget.h"
 
+#include <QScrollArea>
+#include <QGridLayout>
 #include <QVBoxLayout>
-#include <QLabel>
-#include <QPushButton>
 
-MarketsPage::MarketsPage(MarketApiClient *api, QWidget *parent)
-    : QWidget(parent), m_api(api)
-{
-    auto *layout = new QVBoxLayout(this);
+MarketsPage::MarketsPage(QWidget *parent) : QWidget(parent) {
+    auto *root = new QVBoxLayout(this);
+    root->setContentsMargins(0, 0, 0, 0);
+    root->setSpacing(0);
 
-    layout->addWidget(new QLabel("<h2>Markets</h2>", this));
+    m_scroll = new QScrollArea(this);
+    m_scroll->setWidgetResizable(true);
+    m_scroll->setFrameShape(QFrame::NoFrame);
 
-    m_label = new QLabel("Markets will be listed here.", this);
-    m_label->setWordWrap(true);
-    layout->addWidget(m_label);
+    m_container = new QWidget(this);
+    m_grid = new QGridLayout(m_container);
+    m_grid->setContentsMargins(10, 10, 10, 10);
+    m_grid->setHorizontalSpacing(12);
+    m_grid->setVerticalSpacing(12);
 
-    auto *fetchBtn = new QPushButton("Fetch Markets", this);
-    fetchBtn->setCursor(Qt::PointingHandCursor);
-    layout->addWidget(fetchBtn);
+    m_scroll->setWidget(m_container);
+    root->addWidget(m_scroll);
 
-    auto *homeBtn = new QPushButton("Back to Home", this);
-    homeBtn->setCursor(Qt::PointingHandCursor);
-    layout->addWidget(homeBtn);
-
-    layout->addStretch(1);
-
-    connect(fetchBtn, &QPushButton::clicked, m_api, &MarketApiClient::fetchMarkets);
-    connect(homeBtn, &QPushButton::clicked, this, &MarketsPage::backHome);
-
-    connect(m_api, &MarketApiClient::marketsReady, this, &MarketsPage::onMarkets);
-    connect(m_api, &MarketApiClient::error,        this, &MarketsPage::onError);
+    setDemoMarkets();
 }
 
-void MarketsPage::onMarkets(const QString &response) {
-    m_label->setText(response.isEmpty() ? "No markets returned." : response);
+void MarketsPage::clearCards() {
+    while (m_grid->count()) {
+        auto *item = m_grid->takeAt(0);
+        delete item->widget();
+        delete item;
+    }
 }
 
-void MarketsPage::onError(const QString &message) {
-    m_label->setText("Error fetching markets:\n" + message);
+void MarketsPage::addCard(const QString &q, const QVector<OutcomeView> &o, const QString &vol) {
+    auto *card = new MarketCardWidget(m_container);
+    card->setMarket(q, o, vol);
+
+    int idx = m_grid->count();
+    int cols = 2;                 // simple 2-column grid
+    int row = idx / cols;
+    int col = idx % cols;
+    m_grid->addWidget(card, row, col);
+}
+
+void MarketsPage::setCategory(const QString &category) {
+    m_category = category;
+    // for now just refresh demo list (later you filter + call API)
+    setDemoMarkets();
+}
+
+void MarketsPage::setDemoMarkets() {
+    clearCards();
+
+    addCard("Who will be the next Supreme Leader of Iran?",
+            {{"Alireza Arafi", 27}, {"Position abolished", 16}},
+            "$3,483,499 vol");
+
+    addCard("How long will the government shutdown last?",
+            {{"At least 43 days", 50}, {"At least 40 days", 53}},
+            "$2,518,143 vol");
+
+    addCard("Who will Trump nominate as Fed Chair?",
+            {{"Kevin Warsh", 94}, {"Judy Shelton", 4}},
+            "$202,785,117 vol");
 }

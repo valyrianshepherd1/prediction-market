@@ -18,6 +18,10 @@ add_executable(frontend_app
         src/ui/pages/MarketsPage.cpp
         src/network/MarketApiClient.h
         src/network/MarketApiClient.cpp
+        src/ui/MarketCardWidget.h
+        src/ui/MarketCardWidget.cpp
+        src/ui/Sidebar.h
+        src/ui/Sidebar.cpp
 )
 
 target_link_libraries(frontend_app PRIVATE Qt6::Widgets Qt6::Network)

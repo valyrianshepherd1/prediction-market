@@ -3,6 +3,7 @@
 
 class QPushButton;
 class QToolButton;
+class QLabel;
 
 class HeaderBar : public QWidget {
     Q_OBJECT
@@ -13,9 +14,9 @@ public:
         void homeClicked();
     void profileClicked();
 
-private:
-    static QIcon makeProfileIcon(int size);
+public:
+    void setTitle(const QString &t);
 
-    QPushButton *m_homeBtn = nullptr;
-    QToolButton *m_profileBtn = nullptr;
+private:
+    QLabel *m_title = nullptr;
 };
