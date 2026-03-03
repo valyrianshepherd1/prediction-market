@@ -8,6 +8,20 @@
       "key": "./certs/server.key"
     }
   ],
+  "db_clients": [
+    {
+      "name": "default",
+      "rdbms": "postgresql",
+      "host": "127.0.0.1",
+      "port": 5432,
+      "dbname": "pmdb",
+      "user": "pm",
+      "passwd": "pm_password",
+      "is_fast": false,
+      "number_of_connections": 1,
+      "timeout": -1
+    }
+  ],
   "app": {
     "threads_num": 0,
     "log": {
