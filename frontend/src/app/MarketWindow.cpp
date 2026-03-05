@@ -19,7 +19,8 @@ static QString darkStyle() {
 
         QListWidget { background: #0b0f14; border: 1px solid #1b2430; border-radius: 10px; padding: 6px; }
         QListWidget::item { padding: 10px; border-radius: 8px; }
-        QListWidget::item:selected { background: #141c26; }
+        /* Remove rectangular background when selecting categories */
+        QListWidget::item:selected { background: transparent; }
 
         QPushButton { background: #141c26; border: 1px solid #1b2430; padding: 8px 12px; border-radius: 10px; }
         QPushButton:hover { background: #182131; }
@@ -64,7 +65,6 @@ MarketWindow::MarketWindow(QWidget *parent) : QMainWindow(parent) {
     qApp->setStyleSheet(darkStyle());
 
     connect(m_sidebar, &Sidebar::categoryChanged, this, &MarketWindow::onCategoryChanged);
-    connect(m_header, &HeaderBar::homeClicked, [this] { onCategoryChanged("Trending"); });
     connect(m_header, &HeaderBar::profileClicked, this, &MarketWindow::openProfile);
 
     onCategoryChanged("Trending");

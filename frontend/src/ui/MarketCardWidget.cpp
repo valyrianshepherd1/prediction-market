@@ -15,9 +15,13 @@ MarketCardWidget::MarketCardWidget(QWidget *parent) : QFrame(parent) {
     m_question = new QLabel(this);
     m_question->setWordWrap(true);
     m_question->setObjectName("MarketQuestion");
+    // Center the question text within the card
+    m_question->setAlignment(Qt::AlignHCenter | Qt::AlignTop);
 
     m_volume = new QLabel(this);
     m_volume->setObjectName("MarketVolume");
+    // Give the volume label a bit of horizontal padding so it does not hug the border
+    m_volume->setContentsMargins(8, 0, 8, 0);
 
     m_outcomesContainer = new QWidget(this);
     auto *outLayout = new QVBoxLayout(m_outcomesContainer);
@@ -46,7 +50,8 @@ void MarketCardWidget::setMarket(const QString &question,
     for (const auto &o : outcomes) {
         QWidget *row = new QWidget(m_outcomesContainer);
         auto *h = new QHBoxLayout(row);
-        h->setContentsMargins(0, 0, 0, 0);
+        // Add small horizontal margins so option names/bars aren't flush with the card border
+        h->setContentsMargins(8, 0, 8, 0);
         h->setSpacing(10);
 
         auto *name = new QLabel(o.name, row);

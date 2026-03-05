@@ -26,10 +26,6 @@ HeaderBar::HeaderBar(QWidget *parent) : QWidget(parent) {
     h->setContentsMargins(10, 10, 10, 10);
     h->setSpacing(10);
 
-    auto *home = new QPushButton("Home", this);
-    home->setCursor(Qt::PointingHandCursor);
-    connect(home, &QPushButton::clicked, this, &HeaderBar::homeClicked);
-
     m_title = new QLabel("Trending", this);
     m_title->setObjectName("HeaderTitle");
 
@@ -40,7 +36,6 @@ HeaderBar::HeaderBar(QWidget *parent) : QWidget(parent) {
     profile->setIconSize(QSize(26, 26));
     connect(profile, &QToolButton::clicked, this, &HeaderBar::profileClicked);
 
-    h->addWidget(home);
     h->addStretch(1);
     h->addWidget(m_title);
     h->addStretch(1);

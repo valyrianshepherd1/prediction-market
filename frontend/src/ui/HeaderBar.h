@@ -11,7 +11,6 @@ public:
     explicit HeaderBar(QWidget *parent = nullptr);
 
     signals:
-        void homeClicked();
     void profileClicked();
 
 public:
