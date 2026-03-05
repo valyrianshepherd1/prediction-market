@@ -7,7 +7,6 @@
 using drogon::orm::DrogonDbException;
 using drogon::orm::Result;
 using TransactionPtr = std::shared_ptr<drogon::orm::Transaction>;
-
 MarketRepository::MarketRepository(drogon::orm::DbClientPtr db) : db_(std::move(db)) {}
 
 static MarketRow rowToMarket(const Result &r, size_t i = 0) {

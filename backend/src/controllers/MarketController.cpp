@@ -38,15 +38,17 @@ namespace {
         j["id"] = m.id;
         j["question"] = m.question;
         j["status"] = m.status;
-        j["resolved_outcome_id"] = m.resolved_outcome_id ? Json::Value(*m.resolved_outcome_id) : Json::Value(Json::nullValue);
+        j["resolved_outcome_id"] = m.resolved_outcome_id
+                                       ? Json::Value(*m.resolved_outcome_id)
+                                       : Json::Value(Json::nullValue);
         j["created_at"] = m.created_at;
         return j;
     }
 
     [[nodiscard]] Expected<int> parseInt(std::string_view s,
-                                    int minV,
-                                    int maxV,
-                                    std::string_view fieldName) {
+                                         int minV,
+                                         int maxV,
+                                         std::string_view fieldName) {
         int v{};
         const auto *begin = s.data();
         const auto *end = s.data() + s.size();
@@ -244,5 +246,47 @@ void MarketController::createMarket(const drogon::HttpRequestPtr &req,
         },
         [cbp](const drogon::orm::DrogonDbException &e) {
             (*cbp)(jsonError({drogon::k503ServiceUnavailable, e.base().what()}));
+        });
+}
+
+void MarketController::listOutcomes(const drogon::HttpRequestPtr&,
+                                   std::function<void(const drogon::HttpResponsePtr&)>&& cb,
+                                   std::string id) const {
+    auto cbp = std::make_shared<std::function<void(const drogon::HttpResponsePtr&)>>(std::move(cb));
+
+    drogon::orm::DbClientPtr db;
+    try {
+        db = drogon::app().getDbClient("default");
+    } catch (const std::exception& e) {
+        Json::Value j;
+        j["error"] = std::string("db client not available: ") + e.what();
+        auto resp = drogon::HttpResponse::newHttpJsonResponse(j);
+        resp->setStatusCode(drogon::k500InternalServerError);
+        return (*cbp)(resp);
+    }
+
+    MarketService svc{MarketRepository{db}};
+    svc.listOutcomesByMarketId(
+        id,
+        [cbp](std::vector<OutcomeRow> outs) mutable {
+          Json::Value arr(Json::arrayValue);
+          for (const auto& o : outs) {
+            Json::Value j;
+            j["id"] = o.id;
+            j["market_id"] = o.market_id;
+            j["title"] = o.title;
+            j["outcome_index"] = o.outcome_index;
+            arr.append(j);
+          }
+          auto resp = drogon::HttpResponse::newHttpJsonResponse(arr);
+          resp->setStatusCode(drogon::k200OK);
+          (*cbp)(resp);
+        },
+        [cbp](const drogon::orm::DrogonDbException& e) mutable {
+          Json::Value j;
+          j["error"] = e.base().what();
+          auto resp = drogon::HttpResponse::newHttpJsonResponse(j);
+          resp->setStatusCode(drogon::k503ServiceUnavailable);
+          (*cbp)(resp);
         });
 }
