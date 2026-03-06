@@ -1,10 +1,11 @@
 #pragma once
 
 #include "pm/util/ApiError.h"
-
 #include <drogon/orm/DbClient.h>
+
 #include <cstdint>
 #include <functional>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -43,6 +44,25 @@ public:
                       int depth,
                       std::function<void(OrderBook)> onOk,
                       std::function<void(const drogon::orm::DrogonDbException &)> onErr) const;
+
+    void getOrderForUser(const std::string &userId,
+                         const std::string &orderId,
+                         std::function<void(OrderRow)> onOk,
+                         std::function<void(const pm::ApiError &)> onBizErr,
+                         std::function<void(const drogon::orm::DrogonDbException &)> onErr) const;
+
+    void listOrdersForUser(const std::string &userId,
+                           const std::optional<std::string> &status,
+                           int limit,
+                           int offset,
+                           std::function<void(std::vector<OrderRow>)> onOk,
+                           std::function<void(const drogon::orm::DrogonDbException &)> onErr) const;
+
+    void cancelOrderWithRelease(const std::string &userId,
+                                const std::string &orderId,
+                                std::function<void(OrderRow)> onOk,
+                                std::function<void(const pm::ApiError &)> onBizErr,
+                                std::function<void(const drogon::orm::DrogonDbException &)> onErr) const;
 
 private:
     drogon::orm::DbClientPtr db_;

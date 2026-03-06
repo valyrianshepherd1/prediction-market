@@ -9,6 +9,13 @@ namespace pm {
     struct ApiError {
         drogon::HttpStatusCode code{};
         std::string message;
+        [[nodiscard]] explicit operator bool() const noexcept {
+            return code == drogon::k200OK;
+        }
+
+        [[nodiscard]] bool ok() const noexcept {
+            return static_cast<bool>(*this);
+        }
     };
 
     inline drogon::HttpResponsePtr jsonError(const ApiError &e) {
@@ -18,5 +25,4 @@ namespace pm {
         resp->setStatusCode(e.code);
         return resp;
     }
-
 } // namespace pm
