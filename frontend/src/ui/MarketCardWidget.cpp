@@ -16,7 +16,8 @@ MarketCardWidget::MarketCardWidget(QWidget *parent) : QFrame(parent) {
     m_question->setWordWrap(true);
     m_question->setObjectName("MarketQuestion");
     // Center the question text within the card
-    m_question->setAlignment(Qt::AlignHCenter | Qt::AlignTop);
+    m_question->setAlignment(Qt::AlignCenter);
+    m_question->setMinimumHeight(80); // gives space so it looks centered like your screenshot
 
     m_volume = new QLabel(this);
     m_volume->setObjectName("MarketVolume");

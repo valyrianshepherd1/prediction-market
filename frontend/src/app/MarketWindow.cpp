@@ -2,11 +2,13 @@
 #include "../ui/HeaderBar.h"
 #include "../ui/Sidebar.h"
 #include "../ui/pages/MarketsPage.h"
+#include "../ui/pages/ProfilePage.h"
 #include <QApplication>
 #include <QWidget>
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QMessageBox>
+#include <QStackedWidget>
 
 static QString darkStyle() {
     return R"(
@@ -55,9 +57,14 @@ MarketWindow::MarketWindow(QWidget *parent) : QMainWindow(parent) {
     m_sidebar->setFixedWidth(200);
 
     m_markets = new MarketsPage(this);
+    m_profile = new ProfilePage(this);
+
+    m_stack = new QStackedWidget(this);
+    m_stack->addWidget(m_markets);   // index 0
+    m_stack->addWidget(m_profile);   // index 1
 
     h->addWidget(m_sidebar);
-    h->addWidget(m_markets, 1);
+    h->addWidget(m_stack, 1);
 
     root->addWidget(body, 1);
     setCentralWidget(central);
@@ -68,13 +75,27 @@ MarketWindow::MarketWindow(QWidget *parent) : QMainWindow(parent) {
     connect(m_header, &HeaderBar::profileClicked, this, &MarketWindow::openProfile);
 
     onCategoryChanged("Trending");
+
+    connect(m_profile, &ProfilePage::backRequested, this, &MarketWindow::showMarkets);
 }
 
 void MarketWindow::onCategoryChanged(const QString &cat) {
+    m_currentCategory = cat;
     m_header->setTitle(cat);
     m_markets->setCategory(cat);
+
+    if (m_sidebar) m_sidebar->show(); // Make sure categroies are visible
+    if (m_stack) m_stack->setCurrentWidget(m_markets);
 }
 
 void MarketWindow::openProfile() {
-    QMessageBox::information(this, "Profile", "Profile clicked!");
+    m_header->setTitle("Profile");
+    if (m_sidebar) m_sidebar->hide(); // When pofile categories should be hidden
+    if (m_stack) m_stack->setCurrentWidget(m_profile);
+}
+
+void MarketWindow::showMarkets() {
+    if (m_sidebar) m_sidebar->show(); // When Markets categories should be seen
+    if (m_stack) m_stack->setCurrentWidget(m_markets);
+    m_header->setTitle(m_currentCategory);
 }

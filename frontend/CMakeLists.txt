@@ -22,6 +22,8 @@ add_executable(frontend_app
         src/ui/MarketCardWidget.cpp
         src/ui/Sidebar.h
         src/ui/Sidebar.cpp
+        src/ui/pages/ProfilePage.h
+        src/ui/pages/ProfilePage.cpp
 )
 
 target_link_libraries(frontend_app PRIVATE Qt6::Widgets Qt6::Network)
