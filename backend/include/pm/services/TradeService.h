@@ -12,7 +12,7 @@ public:
                              int offset,
                              std::function<void(std::vector<TradeRow>)> onOk,
                              std::function<void(const drogon::orm::DrogonDbException &)> onErr) const {
-        repo_.listTradesByOutcome(outcomeId, limit, offset, std::move(onOk), std::move(onErr));
+        repo_.listByOutcome(outcomeId, limit, offset, std::move(onOk), std::move(onErr));
     }
 
     inline void listTradesByUser(const std::string &userId,
@@ -20,7 +20,7 @@ public:
                           int offset,
                           std::function<void(std::vector<TradeRow>)> onOk,
                           std::function<void(const drogon::orm::DrogonDbException &)> onErr) const {
-        repo_.listTradesByUser(userId, limit, offset, std::move(onOk), std::move(onErr));
+        repo_.listByUser(userId, limit, offset, std::move(onOk), std::move(onErr));
     }
 
 private:

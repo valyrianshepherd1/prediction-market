@@ -10,7 +10,6 @@ public:
         ADD_METHOD_TO(OrderController::getOrder, "/orders/{1}", drogon::Get);
         ADD_METHOD_TO(OrderController::cancelOrder, "/orders/{1}", drogon::Delete);
         ADD_METHOD_TO(OrderController::listMyOrders, "/me/orders", drogon::Get);
-
         ADD_METHOD_TO(OrderController::getOrderBook, "/outcomes/{1}/orderbook", drogon::Get);
     METHOD_LIST_END
 
