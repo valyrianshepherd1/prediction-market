@@ -90,8 +90,13 @@ void matchTakerOrderInTx(const TransactionPtr &tx,
             if (r.empty()) return ctx->onBizErr(drogon::k404NotFound, "taker order not found");
             ctx->takerRemaining = r[0]["qty_remaining_micros"].as<std::int64_t>();
 
-            ctx->step = [ctx]() mutable {
+            std::weak_ptr<Ctx> wctx = ctx;
+            ctx->step = [wctx]() mutable {
+                auto ctx = wctx.lock();
+                if (!ctx) return;
+
                 if (ctx->takerRemaining <= 0) return ctx->onDone();
+
                 if (ctx->tradesMade >= ctx->maxTrades) return ctx->onDone();
 
                 const bool takerIsBuy = (ctx->takerSide == "BUY");

@@ -283,7 +283,7 @@ void OrderRepository::getOrderBook(const std::string &outcomeId,
         "FROM orders "
         "WHERE outcome_id = $1::uuid AND side='BUY' AND status IN ('OPEN','PARTIALLY_FILLED') "
         "ORDER BY price_bp DESC, created_at, id "
-        "LIMIT $2";
+        "LIMIT $2::int";
 
     static constexpr std::string_view kSelectSell =
         "SELECT id::text AS id, user_id::text AS user_id, outcome_id::text AS outcome_id, side, price_bp, "
@@ -291,7 +291,7 @@ void OrderRepository::getOrderBook(const std::string &outcomeId,
         "FROM orders "
         "WHERE outcome_id = $1::uuid AND side='SELL' AND status IN ('OPEN','PARTIALLY_FILLED') "
         "ORDER BY price_bp ASC, created_at, id "
-        "LIMIT $2";
+        "LIMIT $2::int";
 
     db_->execSqlAsync(std::string(kSelectBuy),
         [this, ctx, outcomeId, depth](const Result &r) {
@@ -353,7 +353,7 @@ void OrderRepository::listOrdersForUser(const std::string &userId,
         "FROM orders "
         "WHERE user_id = $1::uuid "
         "ORDER BY created_at DESC, id "
-        "LIMIT $2 OFFSET $3";
+        "LIMIT $2::int OFFSET $3::int";
 
     static constexpr std::string_view kSqlWithStatus =
         "SELECT id::text AS id, user_id::text AS user_id, outcome_id::text AS outcome_id, "
@@ -362,7 +362,7 @@ void OrderRepository::listOrdersForUser(const std::string &userId,
         "FROM orders "
         "WHERE user_id = $1::uuid AND status = $2 "
         "ORDER BY created_at DESC, id "
-        "LIMIT $3 OFFSET $4";
+        "LIMIT $3::int OFFSET $4::int";
 
     auto mapRows = [onOk = std::move(onOk)](const Result &r) mutable {
         std::vector<OrderRow> out;

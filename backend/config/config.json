@@ -18,7 +18,7 @@
       "user": "pm",
       "passwd": "pm_password",
       "is_fast": false,
-      "number_of_connections": 1,
+      "number_of_connections": 4,
       "timeout": -1
     }
   ],

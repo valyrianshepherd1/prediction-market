@@ -16,7 +16,7 @@ static MarketRow rowToMarket(const Result &r, size_t i = 0) {
     m.question = row["question"].as<std::string>();
     m.status = row["status"].as<std::string>();
 
-    // если колонки нет в БД — будет ошибка на SQL уровне; предполагаем, что у тебя она уже есть
+    // если колонки нет в БД — будет ошибка на SQL уровне; предполагаем, что она уже есть
     const auto resolved = row["resolved_outcome_id"];
     if (resolved.isNull()) m.resolved_outcome_id = std::nullopt;
     else m.resolved_outcome_id = resolved.as<std::string>();
@@ -45,16 +45,17 @@ void MarketRepository::listMarkets(std::optional<std::string> status,
 
     if (status.has_value()) {
         static const std::string sql =
-            "SELECT "
-            " id::text AS id, "
-            " question, "
-            " status, "
-            " resolved_outcome_id::text AS resolved_outcome_id, "
-            " created_at::text AS created_at "
-            "FROM markets "
-            "WHERE status = $1::text "
-            "ORDER BY created_at DESC "
-            "LIMIT $2::bigint OFFSET $3::bigint;";
+                "SELECT "
+                " m.id::text AS id, "
+                " m.question, "
+                " m.status, "
+                " mr.winning_outcome_id::text AS resolved_outcome_id, "
+                " m.created_at::text AS created_at "
+                "FROM markets m "
+                "LEFT JOIN market_resolutions mr ON mr.market_id = m.id "
+                "WHERE m.status = $1::text "
+                "ORDER BY m.created_at DESC "
+                "LIMIT $2::bigint OFFSET $3::bigint;";
 
         db_->execSqlAsync(
             sql,
@@ -72,15 +73,16 @@ void MarketRepository::listMarkets(std::optional<std::string> status,
     }
 
     static const std::string sql =
-        "SELECT "
-        " id::text AS id, "
-        " question, "
-        " status, "
-        " resolved_outcome_id::text AS resolved_outcome_id, "
-        " created_at::text AS created_at "
-        "FROM markets "
-        "ORDER BY created_at DESC "
-        "LIMIT $1::bigint OFFSET $2::bigint;";
+            "SELECT "
+            " m.id::text AS id, "
+            " m.question, "
+            " m.status, "
+            " mr.winning_outcome_id::text AS resolved_outcome_id, "
+            " m.created_at::text AS created_at "
+            "FROM markets m "
+            "LEFT JOIN market_resolutions mr ON mr.market_id = m.id "
+            "ORDER BY m.created_at DESC "
+            "LIMIT $1::bigint OFFSET $2::bigint;";
 
     db_->execSqlAsync(
         sql,
@@ -99,15 +101,14 @@ void MarketRepository::getMarketById(const std::string &id,
                                     std::function<void(std::optional<MarketRow>)> onOk,
                                     std::function<void(const DrogonDbException &)> onErr) const {
     static const std::string sql =
-        "SELECT "
-        " id::text AS id, "
-        " question, "
-        " status, "
-        " resolved_outcome_id::text AS resolved_outcome_id, "
-        " created_at::text AS created_at "
-        "FROM markets "
-        "WHERE id::text = $1 "
-        "LIMIT 1;";
+            "INSERT INTO markets (question, status) "
+            "VALUES ($1, 'OPEN') "
+            "RETURNING "
+            " id::text AS id, "
+            " question, "
+            " status, "
+            " NULL::text AS resolved_outcome_id, "
+            " created_at::text AS created_at;";
 
     db_->execSqlAsync(
         sql,
@@ -123,14 +124,14 @@ void MarketRepository::createMarket(const std::string &question,
                                    std::function<void(MarketRow)> onOk,
                                    std::function<void(const DrogonDbException &)> onErr) const {
     static const std::string sql =
-        "INSERT INTO markets (question, status) "
-        "VALUES ($1, 'OPEN') "
-        "RETURNING "
-        " id::text AS id, "
-        " question, "
-        " status, "
-        " resolved_outcome_id::text AS resolved_outcome_id, "
-        " created_at::text AS created_at;";
+            "INSERT INTO markets (question, status) "
+            "VALUES ($1, 'OPEN') "
+            "RETURNING "
+            " id::text AS id, "
+            " question, "
+            " status, "
+            " NULL::text AS resolved_outcome_id, "
+            " created_at::text AS created_at;";
 
     db_->execSqlAsync(
         sql,
@@ -194,7 +195,7 @@ void MarketRepository::createMarketWithOutcomes(
             " id::text AS id, "
             " question, "
             " status, "
-            " resolved_outcome_id::text AS resolved_outcome_id, "
+            " NULL::text AS resolved_outcome_id, "
             " created_at::text AS created_at;";
 
         tx->execSqlAsync(
