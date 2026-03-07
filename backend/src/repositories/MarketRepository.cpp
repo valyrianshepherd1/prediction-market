@@ -244,3 +244,69 @@ void MarketRepository::createMarketWithOutcomes(
             question);
     });
 }
+
+void MarketRepository::resolveMarket(
+    const std::string &marketId,
+    const std::string &winningOutcomeId,
+    const std::string &resolvedByUserId,
+    std::function<void(MarketRow)> onOk,
+    std::function<void(const DrogonDbException &)> onErr) const {
+
+    struct State {
+        TransactionPtr tx;
+        std::function<void(MarketRow)> onOk;
+        std::function<void(const DrogonDbException &)> onErr;
+    };
+
+    auto st = std::make_shared<State>();
+    st->onOk = std::move(onOk);
+    st->onErr = std::move(onErr);
+
+    db_->newTransactionAsync([st, marketId, winningOutcomeId, resolvedByUserId](const TransactionPtr &tx) {
+        st->tx = tx;
+
+        static const std::string lockSql =
+            "SELECT id FROM markets WHERE id = $1::uuid FOR UPDATE;";
+
+        tx->execSqlAsync(
+            lockSql,
+            [st, marketId, winningOutcomeId, resolvedByUserId](const Result &) mutable {
+                static const std::string insSql =
+                    "INSERT INTO market_resolutions (market_id, winning_outcome_id, resolved_by_user_id) "
+                    "VALUES ($1::uuid, $2::uuid, $3::uuid);";
+
+                st->tx->execSqlAsync(
+                    insSql,
+                    [st, marketId, winningOutcomeId](const Result &) mutable {
+                        static const std::string updSql =
+                            "UPDATE markets "
+                            "SET status='RESOLVED', closed_at=COALESCE(closed_at, now()) "
+                            "WHERE id=$1::uuid "
+                            "RETURNING "
+                            " id::text AS id, "
+                            " question, "
+                            " status, "
+                            " $2::text AS resolved_outcome_id, "
+                            " created_at::text AS created_at;";
+
+                        st->tx->execSqlAsync(
+                            updSql,
+                            [st](const Result &r3) mutable {
+                                st->onOk(rowToMarket(r3, 0));
+                            },
+                            [st](const DrogonDbException &e) mutable { st->onErr(e); },
+                            marketId,
+                            winningOutcomeId
+                            );
+                    },
+                    [st](const DrogonDbException &e) mutable { st->onErr(e); },
+                    marketId,
+                    winningOutcomeId,
+                    resolvedByUserId
+                    );
+            },
+            [st](const DrogonDbException &e) mutable { st->onErr(e); },
+            marketId
+            );
+    });
+}

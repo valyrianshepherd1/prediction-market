@@ -50,6 +50,12 @@ public:
                                  std::function<void(MarketRow, std::vector<OutcomeRow>)> onOk,
                                  std::function<void(const drogon::orm::DrogonDbException &)> onErr) const;
 
+    void resolveMarket(const std::string &marketId,
+                       const std::string &winningOutcomeId,
+                       const std::string &resolvedByUserId,
+                       std::function<void(MarketRow)> onOk,
+                       std::function<void(const drogon::orm::DrogonDbException &)> onErr) const;
+
 private:
     drogon::orm::DbClientPtr db_;
 };

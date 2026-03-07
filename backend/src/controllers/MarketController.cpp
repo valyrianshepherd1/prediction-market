@@ -290,3 +290,102 @@ void MarketController::listOutcomes(const drogon::HttpRequestPtr&,
           (*cbp)(resp);
         });
 }
+
+void MarketController::resolveMarket(
+    const drogon::HttpRequestPtr &req,
+    std::function<void(const drogon::HttpResponsePtr &)> &&cb,
+    std::string id) const {
+    auto cbp = std::make_shared<std::function<void(const drogon::HttpResponsePtr &)>>(std::move(cb));
+
+    // 1) Проверяем admin token
+    if (auto adm = requireAdmin(req); !adm) {
+        return (*cbp)(jsonError(adm.error()));
+    }
+
+    // 2) Читаем JSON body
+    const auto json = req->getJsonObject();
+    if (!json) {
+        return (*cbp)(jsonError({drogon::k400BadRequest, "expected JSON body"}));
+    }
+
+    // 3) Достаём winning_outcome_id
+    std::string winningOutcomeId = (*json).get("winning_outcome_id", "").asString();
+    if (winningOutcomeId.empty()) {
+        winningOutcomeId = (*json).get("outcome_id", "").asString();
+    }
+    if (winningOutcomeId.empty()) {
+        return (*cbp)(jsonError(
+            {drogon::k400BadRequest, "winning_outcome_id is required"}));
+    }
+
+    // 4) Берём admin user id из env
+    const char *adminUserIdEnv = std::getenv("PM_ADMIN_USER_ID");
+    if (!adminUserIdEnv || std::string_view(adminUserIdEnv).empty()) {
+        return (*cbp)(jsonError(
+            {drogon::k500InternalServerError, "PM_ADMIN_USER_ID is not configured"}));
+    }
+    const std::string adminUserId = adminUserIdEnv;
+
+    // 5) Получаем db client
+    auto db = getDb();
+    if (!db) {
+        return (*cbp)(jsonError(db.error()));
+    }
+
+    // 6) Сервис лучше держать через shared_ptr, чтобы он жил до конца async-цепочки
+    auto svc = std::make_shared<MarketService>(MarketRepository{db.value()});
+
+    // 7) Сначала читаем market + outcomes, чтобы отдать нормальные 404/409/400,
+    //    а не сырую db-ошибку
+    svc->getMarketWithOutcomesById(
+        id,
+        [cbp, svc, winningOutcomeId, adminUserId](
+            std::optional<std::pair<MarketRow, std::vector<OutcomeRow>>> data) mutable {
+            if (!data) {
+                return (*cbp)(jsonError({drogon::k404NotFound, "market not found"}));
+            }
+
+            auto &[market, outcomes] = *data;
+
+            // 8) Нельзя резолвить уже RESOLVED market
+            if (market.status == "RESOLVED") {
+                return (*cbp)(jsonError(
+                    {drogon::k409Conflict, "market already resolved"}));
+            }
+
+            // 9) Проверяем, что winningOutcomeId принадлежит этому market
+            bool belongsToMarket = false;
+            for (const auto &o : outcomes) {
+                if (o.id == winningOutcomeId) {
+                    belongsToMarket = true;
+                    break;
+                }
+            }
+
+            if (!belongsToMarket) {
+                return (*cbp)(jsonError(
+                    {drogon::k400BadRequest,
+                     "winning_outcome_id does not belong to market"}));
+            }
+
+            // 10) Теперь применяем resolve через service/repository
+            svc->resolveMarket(
+                market.id,
+                winningOutcomeId,
+                adminUserId,
+                [cbp](MarketRow updated) mutable {
+                    auto resp =
+                        drogon::HttpResponse::newHttpJsonResponse(marketToJson(updated));
+                    resp->setStatusCode(drogon::k200OK);
+                    (*cbp)(resp);
+                },
+                [cbp](const drogon::orm::DrogonDbException &e) mutable {
+                    (*cbp)(jsonError(
+                        {drogon::k503ServiceUnavailable, e.base().what()}));
+                });
+        },
+        [cbp](const drogon::orm::DrogonDbException &e) mutable {
+            (*cbp)(jsonError({drogon::k503ServiceUnavailable, e.base().what()}));
+        });
+}
+

@@ -64,3 +64,11 @@ void MarketService::listOutcomesByMarketId(const std::string &marketId,
                                            std::function<void(const drogon::orm::DrogonDbException &)> onErr) const {
     repo_.listOutcomesByMarketId(marketId, std::move(onOk), std::move(onErr));
 }
+
+void MarketService::resolveMarket(const std::string &marketId,
+                                  const std::string &winningOutcomeId,
+                                  const std::string &resolvedByUserId,
+                                  std::function<void(MarketRow)> onOk,
+                                  std::function<void(const drogon::orm::DrogonDbException &)> onErr) const {
+    repo_.resolveMarket(marketId, winningOutcomeId, resolvedByUserId, std::move(onOk), std::move(onErr));
+}

@@ -10,12 +10,14 @@ public:
         ADD_METHOD_TO(MarketController::getMarket, "/markets/{1}", drogon::Get);
         ADD_METHOD_TO(MarketController::listOutcomes, "/markets/{1}/outcomes", drogon::Get);
         ADD_METHOD_TO(MarketController::createMarket, "/admin/markets", drogon::Post);
+        ADD_METHOD_TO(MarketController::resolveMarket, "/admin/markets/{1}/resolve", drogon::Post);
     METHOD_LIST_END
 
     void listMarkets(const drogon::HttpRequestPtr &req, std::function<void(const drogon::HttpResponsePtr &)> &&cb) const;
     void getMarket(const drogon::HttpRequestPtr &req, std::function<void(const drogon::HttpResponsePtr &)> &&cb, std::string id) const;
     void listOutcomes(const drogon::HttpRequestPtr &req, std::function<void(const drogon::HttpResponsePtr &)> &&cb, std::string id) const;
     void createMarket(const drogon::HttpRequestPtr &req, std::function<void(const drogon::HttpResponsePtr &)> &&cb) const;
+    void resolveMarket(const drogon::HttpRequestPtr &req, std::function<void(const drogon::HttpResponsePtr &)> &&cb, std::string id) const;
 
 private:
     static bool isAdmin(const drogon::HttpRequestPtr &req);

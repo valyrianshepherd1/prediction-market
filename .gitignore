@@ -36,3 +36,4 @@ backend/config/logs/
 
 #testing
 scripts/check_all.sh
+scripts/check_all_with_auth.sh

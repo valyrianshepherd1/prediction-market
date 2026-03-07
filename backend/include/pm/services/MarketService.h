@@ -40,6 +40,12 @@ public:
                                std::function<void(std::vector<OutcomeRow>)> onOk,
                                std::function<void(const drogon::orm::DrogonDbException &)> onErr) const;
 
+    void resolveMarket(const std::string &marketId,
+                   const std::string &winningOutcomeId,
+                   const std::string &resolvedByUserId,
+                   std::function<void(MarketRow)> onOk,
+                   std::function<void(const drogon::orm::DrogonDbException &)> onErr) const;
+
 private:
     MarketRepository repo_;
 };
