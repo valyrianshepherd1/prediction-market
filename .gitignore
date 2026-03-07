@@ -26,3 +26,13 @@ compile_commands.json
 # OS
 .DS_Store
 Thumbs.db
+
+# Dev certs / secrets
+backend/config/certs/*.key
+backend/config/certs/*.crt
+
+# Runtime logs
+backend/config/logs/
+
+#testing
+scripts/check_all.sh

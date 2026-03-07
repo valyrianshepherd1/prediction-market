@@ -35,6 +35,10 @@ jobs:
         if: runner.os == 'macOS'
         run: brew install ninja qt
 
+      - name: Install autoconf (macOS)
+        if: runner.os == 'macOS'
+        run: brew install autoconf
+
       - name: Setup MSYS2 (MinGW64)
         if: runner.os == 'Windows'
         id: msys2

@@ -1,1 +1,2 @@
 Use correct CMake preset. In order to do that, you need to choose preset "dev-macos" or "dev-windows" in cmake settings.
+NOTE : Apparently postgres for drogon requires "brew install autoconf" I have to idea what will happen on windows
