@@ -38,7 +38,7 @@ void TradeRepository::listByOutcome(const std::string &outcomeId, int limit, int
         "price_bp, qty_micros, created_at::text AS created_at "
         "FROM trades WHERE outcome_id=$1::uuid "
         "ORDER BY created_at DESC "
-        "LIMIT $2 OFFSET $3";
+        "LIMIT $2::int OFFSET $3::int";
 
     db_->execSqlAsync(std::string(kSql),
         [onOk = std::move(onOk)](const Result &r) mutable {
@@ -65,7 +65,7 @@ void TradeRepository::listByUser(const std::string &userId, int limit, int offse
         "price_bp, qty_micros, created_at::text AS created_at "
         "FROM trades WHERE maker_user_id=$1::uuid OR taker_user_id=$1::uuid "
         "ORDER BY created_at DESC "
-        "LIMIT $2 OFFSET $3";
+        "LIMIT $2::int OFFSET $3::int";
 
     db_->execSqlAsync(std::string(kSql),
         [onOk = std::move(onOk)](const Result &r) mutable {

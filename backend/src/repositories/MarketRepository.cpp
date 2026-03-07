@@ -101,14 +101,16 @@ void MarketRepository::getMarketById(const std::string &id,
                                     std::function<void(std::optional<MarketRow>)> onOk,
                                     std::function<void(const DrogonDbException &)> onErr) const {
     static const std::string sql =
-            "INSERT INTO markets (question, status) "
-            "VALUES ($1, 'OPEN') "
-            "RETURNING "
-            " id::text AS id, "
-            " question, "
-            " status, "
-            " NULL::text AS resolved_outcome_id, "
-            " created_at::text AS created_at;";
+        "SELECT "
+        " m.id::text AS id, "
+        " m.question, "
+        " m.status, "
+        " mr.winning_outcome_id::text AS resolved_outcome_id, "
+        " m.created_at::text AS created_at "
+        "FROM markets m "
+        "LEFT JOIN market_resolutions mr ON mr.market_id = m.id "
+        "WHERE m.id::text = $1 "
+        "LIMIT 1;";
 
     db_->execSqlAsync(
         sql,
