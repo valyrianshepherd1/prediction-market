@@ -240,14 +240,20 @@ void MarketRepository::createMarketWithOutcomes(
                 st->market = rowToMarket(r, 0);
 
                 if (st->titles.empty()) {
-                    st->onOk(std::move(st->market), {});
+                    auto market = std::move(st->market);
+                    std::vector<OutcomeRow> outcomes;
+                    st->tx.reset();
+                    st->onOk(std::move(market), std::move(outcomes));
                     return;
                 }
 
                 auto insertNext = std::make_shared<std::function<void(size_t)>>();
                 *insertNext = [st, insertNext](size_t i) mutable {
                     if (i >= st->titles.size()) {
-                        st->onOk(std::move(st->market), std::move(st->outcomes));
+                        auto market = std::move(st->market);
+                        auto outcomes = std::move(st->outcomes);
+                        st->tx.reset();
+                        st->onOk(std::move(market), std::move(outcomes));
                         return;
                     }
 
