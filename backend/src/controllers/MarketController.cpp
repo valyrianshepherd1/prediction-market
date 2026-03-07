@@ -1,6 +1,7 @@
 #include <pm/controllers/MarketController.h>
 
 #include <charconv>
+#include <cctype>
 #include <cstdlib>
 #include <drogon/drogon.h>
 #include <json/json.h>
@@ -157,6 +158,100 @@ namespace {
         }
         return q;
     }
+
+    [[nodiscard]] std::string trimCopy(std::string s) {
+        auto isSpace = [](unsigned char c) { return std::isspace(c) != 0; };
+
+        while (!s.empty() && isSpace(static_cast<unsigned char>(s.front())))
+            s.erase(s.begin());
+        while (!s.empty() && isSpace(static_cast<unsigned char>(s.back())))
+            s.pop_back();
+
+        return s;
+    }
+
+    [[nodiscard]] bool containsDuplicateTitle(const std::vector<std::string> &titles,
+                                              std::string_view value) {
+        for (const auto &t : titles) {
+            if (t == value)
+                return true;
+        }
+        return false;
+    }
+
+    [[nodiscard]] Expected<std::vector<std::string>> parseOutcomeTitles(
+        const drogon::HttpRequestPtr &req) {
+        const auto json = req->getJsonObject();
+        if (!json) {
+            return pm::unexpected<ApiError>(
+                {drogon::k400BadRequest, "expected JSON body"});
+        }
+
+        const Json::Value *arr = nullptr;
+        if (json->isMember("outcomes")) {
+            arr = &(*json)["outcomes"];
+        } else if (json->isMember("outcome_titles")) {
+            arr = &(*json)["outcome_titles"];
+        }
+
+        if (!arr) {
+            return std::vector<std::string>{"YES", "NO"};
+        }
+
+        if (!arr->isArray()) {
+            return pm::unexpected<ApiError>(
+                {drogon::k400BadRequest, "outcomes must be an array of strings"});
+        }
+
+        std::vector<std::string> titles;
+        titles.reserve(arr->size());
+
+        for (const auto &item : *arr) {
+            if (!item.isString()) {
+                return pm::unexpected<ApiError>(
+                    {drogon::k400BadRequest, "outcomes must contain only strings"});
+            }
+
+            auto title = trimCopy(item.asString());
+            if (title.size() < 1 || title.size() > 80) {
+                return pm::unexpected<ApiError>(
+                    {drogon::k400BadRequest,
+                     "each outcome title must be 1..80 chars"});
+            }
+            if (containsDuplicateTitle(titles, title)) {
+                return pm::unexpected<ApiError>(
+                    {drogon::k400BadRequest, "outcome titles must be unique"});
+            }
+
+            titles.push_back(std::move(title));
+        }
+
+        if (titles.size() < 2 || titles.size() > 10) {
+            return pm::unexpected<ApiError>(
+                {drogon::k400BadRequest, "outcomes count must be 2..10"});
+        }
+
+        return titles;
+    }
+
+    [[nodiscard]] Json::Value outcomeToJson(const OutcomeRow &o) {
+        Json::Value j;
+        j["id"] = o.id;
+        j["market_id"] = o.market_id;
+        j["title"] = o.title;
+        j["outcome_index"] = o.outcome_index;
+        return j;
+    }
+
+    [[nodiscard]] Json::Value marketWithOutcomesToJson(const MarketRow &m,
+                                                       const std::vector<OutcomeRow> &outs) {
+        Json::Value j = marketToJson(m);
+        Json::Value arr(Json::arrayValue);
+        for (const auto &o : outs)
+            arr.append(outcomeToJson(o));
+        j["outcomes"] = std::move(arr);
+        return j;
+    }
 } // namespace
 
 bool MarketController::isAdmin(const drogon::HttpRequestPtr &req) {
@@ -232,15 +327,21 @@ void MarketController::createMarket(const drogon::HttpRequestPtr &req,
     if (!question)
         return (*cbp)(jsonError(question.error()));
 
+    auto outcomeTitles = parseOutcomeTitles(req);
+    if (!outcomeTitles)
+        return (*cbp)(jsonError(outcomeTitles.error()));
+
     auto db = getDb();
     if (!db)
         return (*cbp)(jsonError(db.error()));
 
     MarketService svc{MarketRepository{db.value()}};
-    svc.createMarket(
+    svc.createMarketWithOutcomes(
         question.value(),
-        [cbp](MarketRow created) {
-            auto resp = HttpResponse::newHttpJsonResponse(marketToJson(created));
+        outcomeTitles.value(),
+        [cbp](MarketRow created, std::vector<OutcomeRow> outcomes) {
+            auto resp = HttpResponse::newHttpJsonResponse(
+                marketWithOutcomesToJson(created, outcomes));
             resp->setStatusCode(drogon::k201Created);
             (*cbp)(resp);
         },
@@ -332,11 +433,10 @@ void MarketController::resolveMarket(
         return (*cbp)(jsonError(db.error()));
     }
 
-    // 6) Сервис лучше держать через shared_ptr, чтобы он жил до конца async-цепочки
+    // 6) Сервис через shared_ptr
     auto svc = std::make_shared<MarketService>(MarketRepository{db.value()});
 
-    // 7) Сначала читаем market + outcomes, чтобы отдать нормальные 404/409/400,
-    //    а не сырую db-ошибку
+    // 7) Сначала читаем market + outcomes
     svc->getMarketWithOutcomesById(
         id,
         [cbp, svc, winningOutcomeId, adminUserId](
