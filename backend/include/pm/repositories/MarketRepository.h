@@ -1,6 +1,7 @@
 #pragma once
 
 #include <drogon/orm/DbClient.h>
+
 #include <functional>
 #include <optional>
 #include <string>
@@ -39,16 +40,22 @@ public:
                       std::function<void(MarketRow)> onOk,
                       std::function<void(const drogon::orm::DrogonDbException &)> onErr) const;
 
-    // outcomes
-    void listOutcomesByMarketId(const std::string &marketId,
-                               std::function<void(std::vector<OutcomeRow>)> onOk,
-                               std::function<void(const drogon::orm::DrogonDbException &)> onErr) const;
+    void listOutcomesByMarketId(
+        const std::string &marketId,
+        std::function<void(std::vector<OutcomeRow>)> onOk,
+        std::function<void(const drogon::orm::DrogonDbException &)> onErr) const;
 
-    // market + outcomes в одной транзакции
-    void createMarketWithOutcomes(const std::string &question,
-                                 const std::vector<std::string> &outcomeTitles,
-                                 std::function<void(MarketRow, std::vector<OutcomeRow>)> onOk,
-                                 std::function<void(const drogon::orm::DrogonDbException &)> onErr) const;
+    void createMarketWithOutcomes(
+        const std::string &question,
+        const std::vector<std::string> &outcomeTitles,
+        std::function<void(MarketRow, std::vector<OutcomeRow>)> onOk,
+        std::function<void(const drogon::orm::DrogonDbException &)> onErr) const;
+
+    void updateMarket(const std::string &marketId,
+                      std::optional<std::string> question,
+                      std::optional<std::string> status,
+                      std::function<void(std::optional<MarketRow>)> onOk,
+                      std::function<void(const drogon::orm::DrogonDbException &)> onErr) const;
 
     void resolveMarket(const std::string &marketId,
                        const std::string &winningOutcomeId,

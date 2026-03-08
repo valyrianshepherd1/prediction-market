@@ -3,14 +3,12 @@
 #include <cstdint>
 #include <memory>
 #include <utility>
-#include <vector>
 
 using drogon::orm::DrogonDbException;
 using drogon::orm::Result;
 using TransactionPtr = std::shared_ptr<drogon::orm::Transaction>;
 
 namespace {
-
 struct WinnerRow {
     std::string user_id;
     std::int64_t payout_micros{};
@@ -56,16 +54,17 @@ static std::vector<WinnerRow> rowsToWinners(const Result &r) {
     }
     return out;
 }
-
 }  // namespace
 
-MarketRepository::MarketRepository(drogon::orm::DbClientPtr db) : db_(std::move(db)) {}
+MarketRepository::MarketRepository(drogon::orm::DbClientPtr db) : db_(std::move(db)) {
+}
 
-void MarketRepository::listMarkets(std::optional<std::string> status,
-                                   int limit,
-                                   int offset,
-                                   std::function<void(std::vector<MarketRow>)> onOk,
-                                   std::function<void(const DrogonDbException &)> onErr) const {
+void MarketRepository::listMarkets(
+    std::optional<std::string> status,
+    int limit,
+    int offset,
+    std::function<void(std::vector<MarketRow>)> onOk,
+    std::function<void(const drogon::orm::DrogonDbException &)> onErr) const {
     const std::int64_t lim = static_cast<std::int64_t>(limit);
     const std::int64_t off = static_cast<std::int64_t>(offset);
 
@@ -127,9 +126,10 @@ void MarketRepository::listMarkets(std::optional<std::string> status,
         off);
 }
 
-void MarketRepository::getMarketById(const std::string &id,
-                                     std::function<void(std::optional<MarketRow>)> onOk,
-                                     std::function<void(const DrogonDbException &)> onErr) const {
+void MarketRepository::getMarketById(
+    const std::string &id,
+    std::function<void(std::optional<MarketRow>)> onOk,
+    std::function<void(const drogon::orm::DrogonDbException &)> onErr) const {
     static const std::string sql =
         "SELECT "
         " m.id::text AS id, "
@@ -146,7 +146,8 @@ void MarketRepository::getMarketById(const std::string &id,
         sql,
         [onOk = std::move(onOk)](const Result &r) mutable {
             if (r.empty()) {
-                return onOk(std::nullopt);
+                onOk(std::nullopt);
+                return;
             }
             onOk(rowToMarket(r, 0));
         },
@@ -154,9 +155,10 @@ void MarketRepository::getMarketById(const std::string &id,
         id);
 }
 
-void MarketRepository::createMarket(const std::string &question,
-                                    std::function<void(MarketRow)> onOk,
-                                    std::function<void(const DrogonDbException &)> onErr) const {
+void MarketRepository::createMarket(
+    const std::string &question,
+    std::function<void(MarketRow)> onOk,
+    std::function<void(const drogon::orm::DrogonDbException &)> onErr) const {
     static const std::string sql =
         "INSERT INTO markets (question, status) "
         "VALUES ($1, 'OPEN') "
@@ -177,7 +179,7 @@ void MarketRepository::createMarket(const std::string &question,
 void MarketRepository::listOutcomesByMarketId(
     const std::string &marketId,
     std::function<void(std::vector<OutcomeRow>)> onOk,
-    std::function<void(const DrogonDbException &)> onErr) const {
+    std::function<void(const drogon::orm::DrogonDbException &)> onErr) const {
     static const std::string sql =
         "SELECT "
         " id::text AS id, "
@@ -206,7 +208,7 @@ void MarketRepository::createMarketWithOutcomes(
     const std::string &question,
     const std::vector<std::string> &outcomeTitles,
     std::function<void(MarketRow, std::vector<OutcomeRow>)> onOk,
-    std::function<void(const DrogonDbException &)> onErr) const {
+    std::function<void(const drogon::orm::DrogonDbException &)> onErr) const {
     struct State {
         TransactionPtr tx;
         std::function<void(MarketRow, std::vector<OutcomeRow>)> onOk;
@@ -285,12 +287,114 @@ void MarketRepository::createMarketWithOutcomes(
     });
 }
 
+void MarketRepository::updateMarket(
+    const std::string &marketId,
+    std::optional<std::string> question,
+    std::optional<std::string> status,
+    std::function<void(std::optional<MarketRow>)> onOk,
+    std::function<void(const drogon::orm::DrogonDbException &)> onErr) const {
+    if (question && status) {
+        static const std::string sql =
+            "UPDATE markets "
+            "SET question = $2::text, "
+            "    status = $3::text, "
+            "    closed_at = CASE "
+            "        WHEN $3::text = 'CLOSED' THEN COALESCE(closed_at, now()) "
+            "        WHEN $3::text = 'OPEN' THEN NULL "
+            "        ELSE closed_at "
+            "    END "
+            "WHERE id = $1::uuid "
+            "RETURNING "
+            " id::text AS id, "
+            " question, "
+            " status, "
+            " NULL::text AS resolved_outcome_id, "
+            " created_at::text AS created_at;";
+
+        db_->execSqlAsync(
+            sql,
+            [onOk = std::move(onOk)](const Result &r) mutable {
+                if (r.empty()) {
+                    onOk(std::nullopt);
+                    return;
+                }
+                onOk(rowToMarket(r, 0));
+            },
+            std::move(onErr),
+            marketId,
+            *question,
+            *status);
+        return;
+    }
+
+    if (question) {
+        static const std::string sql =
+            "UPDATE markets "
+            "SET question = $2::text "
+            "WHERE id = $1::uuid "
+            "RETURNING "
+            " id::text AS id, "
+            " question, "
+            " status, "
+            " NULL::text AS resolved_outcome_id, "
+            " created_at::text AS created_at;";
+
+        db_->execSqlAsync(
+            sql,
+            [onOk = std::move(onOk)](const Result &r) mutable {
+                if (r.empty()) {
+                    onOk(std::nullopt);
+                    return;
+                }
+                onOk(rowToMarket(r, 0));
+            },
+            std::move(onErr),
+            marketId,
+            *question);
+        return;
+    }
+
+    if (status) {
+        static const std::string sql =
+            "UPDATE markets "
+            "SET status = $2::text, "
+            "    closed_at = CASE "
+            "        WHEN $2::text = 'CLOSED' THEN COALESCE(closed_at, now()) "
+            "        WHEN $2::text = 'OPEN' THEN NULL "
+            "        ELSE closed_at "
+            "    END "
+            "WHERE id = $1::uuid "
+            "RETURNING "
+            " id::text AS id, "
+            " question, "
+            " status, "
+            " NULL::text AS resolved_outcome_id, "
+            " created_at::text AS created_at;";
+
+        db_->execSqlAsync(
+            sql,
+            [onOk = std::move(onOk)](const Result &r) mutable {
+                if (r.empty()) {
+                    onOk(std::nullopt);
+                    return;
+                }
+                onOk(rowToMarket(r, 0));
+            },
+            std::move(onErr),
+            marketId,
+            *status);
+        return;
+    }
+
+    onOk(std::nullopt);
+}
+
 void MarketRepository::resolveMarket(
     const std::string &marketId,
     const std::string &winningOutcomeId,
     const std::string &resolvedByUserId,
     std::function<void(MarketRow)> onOk,
-    std::function<void(const DrogonDbException &)> onErr) const {
+    std::function<void(const drogon::orm::DrogonDbException &)> onErr) const {
     struct State {
         TransactionPtr tx;
         std::function<void(MarketRow)> onOk;
@@ -320,7 +424,8 @@ void MarketRepository::resolveMarket(
             lockSql,
             [st, resolvedByUserId](const Result &) mutable {
                 static const std::string insResolutionSql =
-                    "INSERT INTO market_resolutions (market_id, winning_outcome_id, resolved_by_user_id) "
+                    "INSERT INTO market_resolutions (market_id, winning_outcome_id, "
+                    "resolved_by_user_id) "
                     "VALUES ($1::uuid, $2::uuid, $3::uuid);";
 
                 st->tx->execSqlAsync(
@@ -357,7 +462,8 @@ void MarketRepository::resolveMarket(
                                     [st](const Result &r4) mutable {
                                         st->winners = rowsToWinners(r4);
 
-                                        auto applyNext = std::make_shared<std::function<void(size_t)>>();
+                                        auto applyNext =
+                                            std::make_shared<std::function<void(size_t)>>();
                                         *applyNext = [st, applyNext](size_t i) mutable {
                                             if (i >= st->winners.size()) {
                                                 st->onOk(std::move(st->updatedMarket));
@@ -386,30 +492,48 @@ void MarketRepository::resolveMarket(
 
                                                     st->tx->execSqlAsync(
                                                         walletSql,
-                                                        [st, applyNext, i, winner](const Result &) mutable {
+                                                        [st, applyNext, i, winner](
+                                                            const Result &) mutable {
                                                             static const std::string ledgerSql =
                                                                 "INSERT INTO cash_ledger "
-                                                                "(user_id, kind, delta_available, delta_reserved, ref_type, ref_id) "
-                                                                "VALUES ($1::uuid, 'SETTLEMENT', $2::bigint, 0, 'MARKET', $3::uuid) "
+                                                                "(user_id, kind, delta_available, "
+                                                                "delta_reserved, ref_type, ref_id) "
+                                                                "VALUES ($1::uuid, "
+                                                                "'SETTLEMENT', $2::bigint, 0, "
+                                                                "'MARKET', $3::uuid) "
                                                                 "RETURNING id::text AS id;";
 
                                                             st->tx->execSqlAsync(
                                                                 ledgerSql,
-                                                                [st, applyNext, i, winner](const Result &r7) mutable {
-                                                                    const std::string cashLedgerId =
-                                                                        r7[0]["id"].as<std::string>();
+                                                                [st, applyNext, i, winner](
+                                                                    const Result &r7) mutable {
+                                                                    const std::string
+                                                                        cashLedgerId =
+                                                                            r7[0]["id"]
+                                                                                .as<std::string>();
 
-                                                                    static const std::string settlementSql =
-                                                                        "INSERT INTO settlements "
-                                                                        "(market_id, user_id, winning_outcome_id, payout_micros, cash_ledger_id) "
-                                                                        "VALUES ($1::uuid, $2::uuid, $3::uuid, $4::bigint, $5::uuid);";
+                                                                    static const std::string
+                                                                        settlementSql =
+                                                                            "INSERT INTO "
+                                                                            "settlements "
+                                                                            "(market_id, user_id, "
+                                                                            "winning_outcome_id, "
+                                                                            "payout_micros, "
+                                                                            "cash_ledger_id) "
+                                                                            "VALUES "
+                                                                            "($1::uuid, $2::uuid, "
+                                                                            "$3::uuid, $4::bigint, "
+                                                                            "$5::uuid);";
 
                                                                     st->tx->execSqlAsync(
                                                                         settlementSql,
-                                                                        [applyNext, i](const Result &) mutable {
+                                                                        [applyNext, i](
+                                                                            const Result &)
+                                                                            mutable {
                                                                             (*applyNext)(i + 1);
                                                                         },
-                                                                        [st](const DrogonDbException &e) mutable {
+                                                                        [st](const DrogonDbException
+                                                                                 &e) mutable {
                                                                             st->onErr(e);
                                                                         },
                                                                         st->marketId,
@@ -418,9 +542,8 @@ void MarketRepository::resolveMarket(
                                                                         winner.payout_micros,
                                                                         cashLedgerId);
                                                                 },
-                                                                [st](const DrogonDbException &e) mutable {
-                                                                    st->onErr(e);
-                                                                },
+                                                                [st](const DrogonDbException &e)
+                                                                    mutable { st->onErr(e); },
                                                                 winner.user_id,
                                                                 winner.payout_micros,
                                                                 st->marketId);
