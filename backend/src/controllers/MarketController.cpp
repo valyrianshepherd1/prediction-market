@@ -93,7 +93,7 @@ struct Paging {
     return Paging{limit, offset};
 }
 
-constexpr std::string_view kAllowedStatuses[] = {"OPEN", "CLOSED", "RESOLVED"};
+constexpr std::string_view kAllowedStatuses[] = {"OPEN", "CLOSED", "RESOLVED", "ARCHIVED"};
 
 [[nodiscard]] bool isAllowedStatus(std::string_view s) {
     for (auto a : kAllowedStatuses) {
@@ -111,7 +111,7 @@ constexpr std::string_view kAllowedStatuses[] = {"OPEN", "CLOSED", "RESOLVED"};
     }
 
     if (!isAllowedStatus(st)) {
-        return pm::unexpected(ApiError{drogon::k400BadRequest, "status must be OPEN|CLOSED|RESOLVED"});
+        return pm::unexpected(ApiError{drogon::k400BadRequest, "status must be OPEN|CLOSED|RESOLVED|ARHICVED"});
     }
 
     return std::optional<std::string>{st};
@@ -624,4 +624,50 @@ void MarketController::resolveMarket(
         [cbp](const drogon::orm::DrogonDbException &e) mutable {
             (*cbp)(jsonError({drogon::k503ServiceUnavailable, e.base().what()}));
         });
+}
+
+void MarketController::archiveMarket(
+    const drogon::HttpRequestPtr &req,
+    std::function<void(const HttpResponsePtr &)> &&cb,
+    std::string id) const {
+    auto cbp = std::make_shared<std::function<void(const drogon::HttpResponsePtr &)>>(std::move(cb));
+
+    if (auto adm = requireAdmin(req); !adm) {
+        return (*cbp)(jsonError(adm.error()));
+    }
+
+    auto db = getDb();
+    if (!db) {
+        return (*cbp)(jsonError(db.error()));
+    }
+
+    MarketService svc{MarketRepository{db.value()}};
+    svc.getMarketById(
+        id,
+        [cbp, svc](std::optional<MarketRow> row) mutable {
+            if (!row) {
+                return (*cbp)(jsonError(ApiError{drogon::k404NotFound, "market not found"}));
+            }
+
+            svc.archiveMarket(
+                row->id,
+                [cbp](MarketRow updated) mutable {
+                    auto resp = HttpResponse::newHttpJsonResponse(marketToJson(updated));
+                    resp->setStatusCode(drogon::k200OK);
+                    (*cbp)(resp);
+                },
+                [cbp](const drogon::orm::DrogonDbException &e) mutable {
+                    (*cbp)(jsonError(ApiError{drogon::k503ServiceUnavailable, e.base().what()}));
+                });
+        },
+        [cbp](const drogon::orm::DrogonDbException &e) mutable {
+            (*cbp)(jsonError(ApiError{drogon::k503ServiceUnavailable, e.base().what()}));
+        });
+}
+
+void MarketController::deleteMarket(
+    const drogon::HttpRequestPtr &req,
+    std::function<void(const drogon::HttpResponsePtr &)> &&cb,
+    std::string id) const {
+    archiveMarket(req, std::move(cb), std::move(id));
 }

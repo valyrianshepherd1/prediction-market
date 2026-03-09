@@ -100,16 +100,17 @@ void MarketRepository::listMarkets(
     }
 
     static const std::string sql =
-        "SELECT "
-        " m.id::text AS id, "
-        " m.question, "
-        " m.status, "
-        " mr.winning_outcome_id::text AS resolved_outcome_id, "
-        " m.created_at::text AS created_at "
-        "FROM markets m "
-        "LEFT JOIN market_resolutions mr ON mr.market_id = m.id "
-        "ORDER BY m.created_at DESC "
-        "LIMIT $1::bigint OFFSET $2::bigint;";
+            "SELECT "
+            " m.id::text AS id, "
+            " m.question, "
+            " m.status, "
+            " mr.winning_outcome_id::text AS resolved_outcome_id, "
+            " m.created_at::text AS created_at "
+            "FROM markets m "
+            "LEFT JOIN market_resolutions mr ON mr.market_id = m.id "
+            "WHERE m.status <> 'ARCHIVED' "
+            "ORDER BY m.created_at DESC "
+            "LIMIT $1::bigint OFFSET $2::bigint;";
 
     db_->execSqlAsync(
         sql,
@@ -577,4 +578,32 @@ void MarketRepository::resolveMarket(
             [st](const DrogonDbException &e) mutable { st->onErr(e); },
             st->marketId);
     });
+}
+
+void MarketRepository::archiveMarket(
+    const std::string &marketId,
+    std::function<void(MarketRow)> onOk,
+    std::function<void(const DrogonDbException &)> onErr) const {
+    static const std::string sql =
+            "UPDATE markets m "
+            "SET status = 'ARCHIVED', "
+            "    closed_at = COALESCE(m.closed_at, now()) "
+            "WHERE m.id = $1::uuid "
+            "RETURNING "
+            " m.id::text AS id, "
+            " m.question, "
+            " m.status, "
+            " (SELECT mr.winning_outcome_id::text "
+            "    FROM market_resolutions mr "
+            "   WHERE mr.market_id = m.id "
+            "   LIMIT 1) AS resolved_outcome_id, "
+            " m.created_at::text AS created_at;";
+
+    db_->execSqlAsync(
+        sql,
+        [onOk = std::move(onOk)](const Result &r) mutable {
+            onOk(rowToMarket(r, 0));
+        },
+        std::move(onErr),
+        marketId);
 }

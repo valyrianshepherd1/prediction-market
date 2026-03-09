@@ -54,6 +54,10 @@ public:
                        std::function<void(MarketRow)> onOk,
                        std::function<void(const drogon::orm::DrogonDbException &)> onErr) const;
 
+    void archiveMarket(const std::string &marketId,
+                       std::function<void(MarketRow)> onOk,
+                       std::function<void(const drogon::orm::DrogonDbException &)> onErr) const;
+
 private:
     MarketRepository repo_;
 };

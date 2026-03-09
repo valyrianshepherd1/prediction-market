@@ -89,3 +89,10 @@ void MarketService::resolveMarket(
     repo_.resolveMarket(
         marketId, winningOutcomeId, resolvedByUserId, std::move(onOk), std::move(onErr));
 }
+
+void MarketService::archiveMarket(
+    const std::string &marketId,
+    std::function<void(MarketRow)> onOk,
+    std::function<void(const drogon::orm::DrogonDbException &)> onErr) const {
+    repo_.archiveMarket(marketId, std::move(onOk), std::move(onErr));
+}

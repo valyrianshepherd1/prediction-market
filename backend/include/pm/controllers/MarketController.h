@@ -14,6 +14,8 @@ public:
         ADD_METHOD_TO(MarketController::updateMarket, "/admin/markets/{1}", drogon::Patch);
         ADD_METHOD_TO(MarketController::closeMarket, "/admin/markets/{1}/close", drogon::Post);
         ADD_METHOD_TO(MarketController::resolveMarket, "/admin/markets/{1}/resolve", drogon::Post);
+        ADD_METHOD_TO(MarketController::archiveMarket, "/admin/markets/{1}/archive", drogon::Post);
+        ADD_METHOD_TO(MarketController::deleteMarket, "/admin/markets/{1}/delete", drogon::Delete);
     METHOD_LIST_END
 
     void listMarkets(const drogon::HttpRequestPtr &req,
@@ -41,6 +43,12 @@ public:
     void resolveMarket(const drogon::HttpRequestPtr &req,
                        std::function<void(const drogon::HttpResponsePtr &)> &&cb,
                        std::string id) const;
+    void archiveMarket(const drogon::HttpRequestPtr &req,
+                       std::function<void(const drogon::HttpResponsePtr &)> &&cb,
+                       std::string id) const;
+    void deleteMarket(const drogon::HttpRequestPtr &req,
+                      std::function<void(const drogon::HttpResponsePtr &)> &&cb,
+                      std::string id) const;
 
 private:
     static bool isAdmin(const drogon::HttpRequestPtr &req);
