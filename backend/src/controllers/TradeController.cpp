@@ -2,6 +2,7 @@
 
 #include "pm/repositories/TradeRepository.h"
 #include "pm/util/ApiError.h"
+#include "pm/util/AuthGuard.h"
 
 #include <drogon/drogon.h>
 
@@ -19,12 +20,6 @@ drogon::orm::DbClientPtr getDbOrNull(std::string &err) {
         err = e.what();
         return nullptr;
     }
-}
-
-pm::ApiError requireUserId(const drogon::HttpRequestPtr &req, std::string &outUserId) {
-    outUserId = req->getHeader("X-User-Id");
-    if (outUserId.empty()) return {drogon::k401Unauthorized, "X-User-Id header is required (temporary auth)"};
-    return {drogon::k200OK, ""};
 }
 
 bool parseInt(std::string_view s, int &out) {
@@ -84,24 +79,31 @@ void TradeController::listMyTrades(const drogon::HttpRequestPtr &req,
     auto cbp = std::make_shared<std::function<void(const drogon::HttpResponsePtr &)>>(
         std::move(cb));
 
-    std::string userId;
-    if (auto e = requireUserId(req, userId); !e) return (*cbp)(pm::jsonError(e));
-
     int limit = 50, offset = 0;
     { int v{}; if (parseInt(req->getParameter("limit"), v)) limit = v; if (parseInt(req->getParameter("offset"), v)) offset = v; }
 
-    std::string dbErr;
-    auto db = getDbOrNull(dbErr);
-    if (!db) return (*cbp)(pm::jsonError({drogon::k500InternalServerError, "db client not available: " + dbErr}));
+    pm::auth::requireAuthenticatedUser(
+        req,
+        [cbp, limit, offset](pm::auth::Principal principal) {
+            std::string dbErr;
+            auto db = getDbOrNull(dbErr);
+            if (!db) return (*cbp)(pm::jsonError({drogon::k500InternalServerError, "db client not available: " + dbErr}));
 
-    TradeRepository repo{db};
-    repo.listByUser(userId, limit, offset,
-        [cbp](std::vector<TradeRow> rows) {
-            Json::Value arr(Json::arrayValue);
-            for (const auto &r : rows) arr.append(tradeToJson(r));
-            auto resp = HttpResponse::newHttpJsonResponse(arr);
-            resp->setStatusCode(drogon::k200OK);
-            (*cbp)(resp);
+            TradeRepository repo{db};
+            repo.listByUser(principal.user_id, limit, offset,
+                [cbp](std::vector<TradeRow> rows) {
+                    Json::Value arr(Json::arrayValue);
+                    for (const auto &r : rows) arr.append(tradeToJson(r));
+                    auto resp = HttpResponse::newHttpJsonResponse(arr);
+                    resp->setStatusCode(drogon::k200OK);
+                    (*cbp)(resp);
+                },
+                [cbp](const drogon::orm::DrogonDbException &e) {
+                    (*cbp)(pm::jsonError({drogon::k503ServiceUnavailable, e.base().what()}));
+                });
+        },
+        [cbp](const pm::ApiError &e) {
+            (*cbp)(pm::jsonError(e));
         },
         [cbp](const drogon::orm::DrogonDbException &e) {
             (*cbp)(pm::jsonError({drogon::k503ServiceUnavailable, e.base().what()}));

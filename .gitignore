@@ -36,3 +36,4 @@ backend/config/logs/
 
 #testing
 scripts/check_all.sh
+.pm_check_backend.log
