@@ -404,6 +404,7 @@ void MarketRepository::resolveMarket(
         std::string winningOutcomeId;
         MarketRow updatedMarket;
         std::vector<WinnerRow> winners;
+        std::shared_ptr<std::function<void(size_t)>> applyNext;
     };
 
     auto st = std::make_shared<State>();
@@ -412,7 +413,13 @@ void MarketRepository::resolveMarket(
     st->marketId = marketId;
     st->winningOutcomeId = winningOutcomeId;
 
-    db_->newTransactionAsync([st, resolvedByUserId](const TransactionPtr &tx) {
+    auto fail = [st](const DrogonDbException &e) {
+        st->applyNext.reset();
+        st->tx.reset();
+        st->onErr(e);
+    };
+
+    db_->newTransactionAsync([st, resolvedByUserId, fail](const TransactionPtr &tx) {
         st->tx = tx;
 
         static const std::string lockSql =
@@ -423,7 +430,7 @@ void MarketRepository::resolveMarket(
 
         tx->execSqlAsync(
             lockSql,
-            [st, resolvedByUserId](const Result &) mutable {
+            [st, resolvedByUserId, fail](const Result &) mutable {
                 static const std::string insResolutionSql =
                     "INSERT INTO market_resolutions (market_id, winning_outcome_id, "
                     "resolved_by_user_id) "
@@ -431,7 +438,7 @@ void MarketRepository::resolveMarket(
 
                 st->tx->execSqlAsync(
                     insResolutionSql,
-                    [st](const Result &) mutable {
+                    [st, fail](const Result &) mutable {
                         static const std::string updateMarketSql =
                             "UPDATE markets "
                             "SET status = 'RESOLVED', "
@@ -446,7 +453,7 @@ void MarketRepository::resolveMarket(
 
                         st->tx->execSqlAsync(
                             updateMarketSql,
-                            [st](const Result &r3) mutable {
+                            [st, fail](const Result &r3) mutable {
                                 st->updatedMarket = rowToMarket(r3, 0);
 
                                 static const std::string winnersSql =
@@ -460,20 +467,28 @@ void MarketRepository::resolveMarket(
 
                                 st->tx->execSqlAsync(
                                     winnersSql,
-                                    [st](const Result &r4) mutable {
+                                    [st, fail](const Result &r4) mutable {
                                         st->winners = rowsToWinners(r4);
 
-                                        auto applyNext =
+                                        st->applyNext =
                                             std::make_shared<std::function<void(size_t)>>();
-                                        *applyNext = [st, applyNext](size_t i) mutable {
+                                        std::weak_ptr<std::function<void(size_t)>> weakApplyNext =
+                                            st->applyNext;
+
+                                        *st->applyNext = [st, weakApplyNext, fail](size_t i) mutable {
                                             if (i >= st->winners.size()) {
-                                                st->onOk(std::move(st->updatedMarket));
+                                                auto updated = std::move(st->updatedMarket);
+                                                st->applyNext.reset();
+                                                st->tx.reset();  // commit before success callback
+                                                st->onOk(std::move(updated));
                                                 return;
                                             }
 
                                             const WinnerRow winner = st->winners[i];
                                             if (winner.payout_micros <= 0) {
-                                                (*applyNext)(i + 1);
+                                                if (auto next = weakApplyNext.lock()) {
+                                                    (*next)(i + 1);
+                                                }
                                                 return;
                                             }
 
@@ -484,7 +499,8 @@ void MarketRepository::resolveMarket(
 
                                             st->tx->execSqlAsync(
                                                 ensureWalletSql,
-                                                [st, applyNext, i, winner](const Result &) mutable {
+                                                [st, weakApplyNext, i, winner, fail](
+                                                    const Result &) mutable {
                                                     static const std::string walletSql =
                                                         "UPDATE wallets "
                                                         "SET available = available + $2::bigint, "
@@ -493,7 +509,7 @@ void MarketRepository::resolveMarket(
 
                                                     st->tx->execSqlAsync(
                                                         walletSql,
-                                                        [st, applyNext, i, winner](
+                                                        [st, weakApplyNext, i, winner, fail](
                                                             const Result &) mutable {
                                                             static const std::string ledgerSql =
                                                                 "INSERT INTO cash_ledger "
@@ -506,17 +522,17 @@ void MarketRepository::resolveMarket(
 
                                                             st->tx->execSqlAsync(
                                                                 ledgerSql,
-                                                                [st, applyNext, i, winner](
-                                                                    const Result &r7) mutable {
-                                                                    const std::string
-                                                                        cashLedgerId =
-                                                                            r7[0]["id"]
-                                                                                .as<std::string>();
+                                                                [st,
+                                                                 weakApplyNext,
+                                                                 i,
+                                                                 winner,
+                                                                 fail](const Result &r7) mutable {
+                                                                    const std::string cashLedgerId =
+                                                                        r7[0]["id"].as<std::string>();
 
                                                                     static const std::string
                                                                         settlementSql =
-                                                                            "INSERT INTO "
-                                                                            "settlements "
+                                                                            "INSERT INTO settlements "
                                                                             "(market_id, user_id, "
                                                                             "winning_outcome_id, "
                                                                             "payout_micros, "
@@ -528,54 +544,49 @@ void MarketRepository::resolveMarket(
 
                                                                     st->tx->execSqlAsync(
                                                                         settlementSql,
-                                                                        [applyNext, i](
-                                                                            const Result &)
-                                                                            mutable {
-                                                                            (*applyNext)(i + 1);
+                                                                        [weakApplyNext, i](
+                                                                            const Result &) mutable {
+                                                                            if (auto next =
+                                                                                    weakApplyNext
+                                                                                        .lock()) {
+                                                                                (*next)(i + 1);
+                                                                            }
                                                                         },
-                                                                        [st](const DrogonDbException
-                                                                                 &e) mutable {
-                                                                            st->onErr(e);
-                                                                        },
+                                                                        fail,
                                                                         st->marketId,
                                                                         winner.user_id,
                                                                         st->winningOutcomeId,
                                                                         winner.payout_micros,
                                                                         cashLedgerId);
                                                                 },
-                                                                [st](const DrogonDbException &e)
-                                                                    mutable { st->onErr(e); },
+                                                                fail,
                                                                 winner.user_id,
                                                                 winner.payout_micros,
                                                                 st->marketId);
                                                         },
-                                                        [st](const DrogonDbException &e) mutable {
-                                                            st->onErr(e);
-                                                        },
+                                                        fail,
                                                         winner.user_id,
                                                         winner.payout_micros);
                                                 },
-                                                [st](const DrogonDbException &e) mutable {
-                                                    st->onErr(e);
-                                                },
+                                                fail,
                                                 winner.user_id);
                                         };
 
-                                        (*applyNext)(0);
+                                        (*st->applyNext)(0);
                                     },
-                                    [st](const DrogonDbException &e) mutable { st->onErr(e); },
+                                    fail,
                                     st->winningOutcomeId);
                             },
-                            [st](const DrogonDbException &e) mutable { st->onErr(e); },
+                            fail,
                             st->marketId,
                             st->winningOutcomeId);
                     },
-                    [st](const DrogonDbException &e) mutable { st->onErr(e); },
+                    fail,
                     st->marketId,
                     st->winningOutcomeId,
                     resolvedByUserId);
             },
-            [st](const DrogonDbException &e) mutable { st->onErr(e); },
+            fail,
             st->marketId);
     });
 }
