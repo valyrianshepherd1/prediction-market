@@ -1,28 +1,20 @@
 #include "MarketWindow.h"
 #include "../ui/HeaderBar.h"
-#include "../ui/Sidebar.h"
 #include "../ui/pages/MarketsPage.h"
 #include "../ui/pages/ProfilePage.h"
-#include <QApplication>
-#include <QWidget>
-#include <QVBoxLayout>
-#include <QHBoxLayout>
-#include <QMessageBox>
-#include <QStackedWidget>
 
-static QString darkStyle() {
+#include <QApplication>
+#include <QHBoxLayout>
+#include <QStackedWidget>
+#include <QVBoxLayout>
+#include <QWidget>
+
+namespace {
+QString darkStyle() {
     return R"(
         QWidget { background: #0b0f14; color: #e8eef5; font-size: 14px; }
         #HeaderBar { background: #0b0f14; }
         #HeaderTitle { font-size: 18px; font-weight: 600; }
-
-        #Sidebar { background: #0b0f14; }
-        #SidebarTitle { font-size: 13px; color: #9fb0c3; }
-
-        QListWidget { background: #0b0f14; border: 1px solid #1b2430; border-radius: 10px; padding: 6px; }
-        QListWidget::item { padding: 10px; border-radius: 8px; }
-        /* Remove rectangular background when selecting categories */
-        QListWidget::item:selected { background: transparent; }
 
         QPushButton { background: #141c26; border: 1px solid #1b2430; padding: 8px 12px; border-radius: 10px; }
         QPushButton:hover { background: #182131; }
@@ -37,8 +29,17 @@ static QString darkStyle() {
     )";
 }
 
+QString profileNameFromEnvironment() {
+    const QString configured = qEnvironmentVariable("PM_FRONTEND_USER_NAME");
+    if (!configured.trimmed().isEmpty()) {
+        return configured;
+    }
+    return QStringLiteral("Guest");
+}
+} // namespace
+
 MarketWindow::MarketWindow(QWidget *parent) : QMainWindow(parent) {
-    setWindowTitle("Prediction Market");
+    setWindowTitle(QStringLiteral("Prediction Market"));
 
     auto *central = new QWidget(this);
     auto *root = new QVBoxLayout(central);
@@ -49,53 +50,78 @@ MarketWindow::MarketWindow(QWidget *parent) : QMainWindow(parent) {
     root->addWidget(m_header);
 
     auto *body = new QWidget(this);
-    auto *h = new QHBoxLayout(body);
-    h->setContentsMargins(0, 0, 0, 0);
-    h->setSpacing(12);
-
-    m_sidebar = new Sidebar(this);
-    m_sidebar->setFixedWidth(200);
+    auto *bodyLayout = new QHBoxLayout(body);
+    bodyLayout->setContentsMargins(0, 0, 0, 0);
+    bodyLayout->setSpacing(0);
 
     m_markets = new MarketsPage(this);
     m_profile = new ProfilePage(this);
+    m_api = new MarketApiClient(this);
 
     m_stack = new QStackedWidget(this);
-    m_stack->addWidget(m_markets);   // index 0
-    m_stack->addWidget(m_profile);   // index 1
+    m_stack->addWidget(m_markets);
+    m_stack->addWidget(m_profile);
 
-    h->addWidget(m_sidebar);
-    h->addWidget(m_stack, 1);
+    bodyLayout->addWidget(m_stack, 1);
 
     root->addWidget(body, 1);
     setCentralWidget(central);
 
     qApp->setStyleSheet(darkStyle());
 
-    connect(m_sidebar, &Sidebar::categoryChanged, this, &MarketWindow::onCategoryChanged);
+    m_profileName = profileNameFromEnvironment();
+    m_profile->setUserName(m_profileName);
+
     connect(m_header, &HeaderBar::profileClicked, this, &MarketWindow::openProfile);
-
-    onCategoryChanged("Trending");
-
     connect(m_profile, &ProfilePage::backRequested, this, &MarketWindow::showMarkets);
-}
 
-void MarketWindow::onCategoryChanged(const QString &cat) {
-    m_currentCategory = cat;
-    m_header->setTitle(cat);
-    m_markets->setCategory(cat);
+    connect(m_api, &MarketApiClient::marketsReady, m_markets, &MarketsPage::setMarkets);
+    connect(m_api, &MarketApiClient::marketsError, m_markets, &MarketsPage::setError);
+    connect(m_api, &MarketApiClient::walletReady, this, &MarketWindow::onWalletLoaded);
+    connect(m_api, &MarketApiClient::walletError, this, &MarketWindow::onWalletError);
 
-    if (m_sidebar) m_sidebar->show(); // Make sure categroies are visible
-    if (m_stack) m_stack->setCurrentWidget(m_markets);
+    m_header->setTitle(QStringLiteral("Markets"));
+
+    m_markets->setLoading(QStringLiteral("Loading markets from %1…").arg(m_api->baseUrl()));
+    m_api->fetchMarkets();
+
+    if (!m_api->configuredUserId().trimmed().isEmpty()) {
+        m_profile->setStatusMessage(QStringLiteral("Loading wallet from %1…").arg(m_api->baseUrl()));
+        m_api->fetchWallet();
+    }
 }
 
 void MarketWindow::openProfile() {
-    m_header->setTitle("Profile");
-    if (m_sidebar) m_sidebar->hide(); // When pofile categories should be hidden
-    if (m_stack) m_stack->setCurrentWidget(m_profile);
+    m_header->setTitle(QStringLiteral("Profile"));
+    if (m_stack) {
+        m_stack->setCurrentWidget(m_profile);
+    }
+
+    if (!m_api->configuredUserId().trimmed().isEmpty()) {
+        m_profile->setStatusMessage(QStringLiteral("Refreshing wallet…"));
+        m_api->fetchWallet();
+    }
 }
 
 void MarketWindow::showMarkets() {
-    if (m_sidebar) m_sidebar->show(); // When Markets categories should be seen
-    if (m_stack) m_stack->setCurrentWidget(m_markets);
-    m_header->setTitle(m_currentCategory);
+    if (m_stack) {
+        m_stack->setCurrentWidget(m_markets);
+    }
+    m_header->setTitle(QStringLiteral("Markets"));
+}
+
+void MarketWindow::onWalletLoaded(const ApiWallet &wallet) {
+    const QString displayName = m_profileName == QStringLiteral("Guest") && !wallet.userId.isEmpty()
+                                    ? wallet.userId
+                                    : m_profileName;
+    m_profile->setUserName(displayName);
+    m_profile->setWalletAmounts(wallet.available, wallet.reserved);
+    m_profile->setStatusMessage(
+        wallet.updatedAt.isEmpty()
+            ? QStringLiteral("Wallet loaded successfully.")
+            : QStringLiteral("Wallet updated at %1").arg(wallet.updatedAt));
+}
+
+void MarketWindow::onWalletError(const QString &message) {
+    m_profile->setStatusMessage(message, true);
 }

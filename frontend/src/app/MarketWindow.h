@@ -1,8 +1,9 @@
 #pragma once
+
+#include "../network/MarketApiClient.h"
 #include <QMainWindow>
 
 class HeaderBar;
-class Sidebar;
 class MarketsPage;
 class QStackedWidget;
 class ProfilePage;
@@ -13,17 +14,17 @@ public:
     explicit MarketWindow(QWidget *parent = nullptr);
 
 private slots:
-    void onCategoryChanged(const QString &cat);
     void openProfile();
     void showMarkets();
+    void onWalletLoaded(const ApiWallet &wallet);
+    void onWalletError(const QString &message);
 
 private:
     HeaderBar *m_header = nullptr;
-    Sidebar *m_sidebar = nullptr;
     MarketsPage *m_markets = nullptr;
-
     QStackedWidget *m_stack = nullptr;
     ProfilePage *m_profile = nullptr;
+    MarketApiClient *m_api = nullptr;
 
-    QString m_currentCategory = "Trending";
+    QString m_profileName = QStringLiteral("Guest");
 };

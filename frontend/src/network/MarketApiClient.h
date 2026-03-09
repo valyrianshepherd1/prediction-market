@@ -1,6 +1,41 @@
 #pragma once
-#include <QObject>
+
 #include <QNetworkAccessManager>
+#include <QObject>
+#include <QUrl>
+#include <QVector>
+
+#include <functional>
+
+struct ApiOutcome {
+    QString id;
+    QString title;
+    int pricePercent = 50;
+    bool hasLivePrice = false;
+};
+
+struct ApiMarket {
+    QString id;
+    QString question;
+    QString status;
+    QString createdAt;
+    QVector<ApiOutcome> outcomes;
+};
+
+struct ApiWallet {
+    QString userId;
+    qint64 available = 0;
+    qint64 reserved = 0;
+    QString updatedAt;
+};
+
+Q_DECLARE_METATYPE(ApiOutcome)
+Q_DECLARE_METATYPE(ApiMarket)
+Q_DECLARE_METATYPE(ApiWallet)
+Q_DECLARE_METATYPE(QVector<ApiMarket>)
+
+class QJsonDocument;
+class QNetworkReply;
 
 class MarketApiClient : public QObject {
     Q_OBJECT
@@ -8,14 +43,29 @@ public:
     explicit MarketApiClient(QObject *parent = nullptr);
 
     void fetchMarkets();
+    void fetchWallet();
+
+    [[nodiscard]] QString baseUrl() const;
+    [[nodiscard]] QString configuredUserId() const;
 
     signals:
-        void marketsReady(const QString &response);
-    void error(const QString &message);
-
-private slots:
-    void onFinished(QNetworkReply *reply);
+        void marketsReady(const QVector<ApiMarket> &markets);
+    void walletReady(const ApiWallet &wallet);
+    void marketsError(const QString &message);
+    void walletError(const QString &message);
 
 private:
+    void getJson(const QUrl &url,
+                 const std::function<void(const QJsonDocument &)> &onSuccess,
+                 const std::function<void(const QString &)> &onError = {});
+    void ignoreSslErrorsIfNeeded(QNetworkReply *reply) const;
+    void finishPendingMarketRequest();
+    [[nodiscard]] QUrl apiUrl(const QString &pathWithQuery) const;
+
     QNetworkAccessManager m_manager;
+    QUrl m_baseUrl;
+    QString m_userId;
+
+    QVector<ApiMarket> m_markets;
+    int m_pendingMarketRequests = 0;
 };

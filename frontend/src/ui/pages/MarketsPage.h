@@ -1,6 +1,9 @@
 #pragma once
+
+#include "../../network/MarketApiClient.h"
 #include <QWidget>
 
+class QLabel;
 class QGridLayout;
 class QScrollArea;
 
@@ -9,16 +12,19 @@ class MarketsPage : public QWidget {
 public:
     explicit MarketsPage(QWidget *parent = nullptr);
 
-    void setDemoMarkets(); // for testing
-
 public slots:
-    void setCategory(const QString &category);
+    void setMarkets(const QVector<ApiMarket> &markets);
+    void setLoading(const QString &message = QStringLiteral("Loading markets…"));
+    void setError(const QString &message);
 
 private:
     void clearCards();
-    void addCard(const QString &q, const QVector<struct OutcomeView> &o, const QString &vol);
+    void render();
+    void addCard(const ApiMarket &market);
 
-    QString m_category;
+    QVector<ApiMarket> m_allMarkets;
+
+    QLabel *m_statusLabel = nullptr;
     QScrollArea *m_scroll = nullptr;
     QWidget *m_container = nullptr;
     QGridLayout *m_grid = nullptr;

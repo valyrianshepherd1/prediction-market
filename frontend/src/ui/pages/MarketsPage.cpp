@@ -1,14 +1,40 @@
 #include "MarketsPage.h"
 #include "../MarketCardWidget.h"
 
-#include <QScrollArea>
+#include <QFrame>
 #include <QGridLayout>
+#include <QLabel>
+#include <QScrollArea>
 #include <QVBoxLayout>
+
+namespace {
+QString marketMetaText(const ApiMarket &market) {
+    const int outcomeCount = market.outcomes.size();
+    return QStringLiteral("%1 • %2 outcome%3")
+        .arg(market.status.isEmpty() ? QStringLiteral("OPEN") : market.status)
+        .arg(outcomeCount)
+        .arg(outcomeCount == 1 ? QString() : QStringLiteral("s"));
+}
+
+QVector<OutcomeView> toOutcomeViews(const ApiMarket &market) {
+    QVector<OutcomeView> views;
+    views.reserve(market.outcomes.size());
+    for (const ApiOutcome &outcome : market.outcomes) {
+        views.push_back({outcome.title, outcome.pricePercent});
+    }
+    return views;
+}
+} // namespace
 
 MarketsPage::MarketsPage(QWidget *parent) : QWidget(parent) {
     auto *root = new QVBoxLayout(this);
     root->setContentsMargins(0, 0, 0, 0);
-    root->setSpacing(0);
+    root->setSpacing(8);
+
+    m_statusLabel = new QLabel(QStringLiteral("Loading markets…"), this);
+    m_statusLabel->setWordWrap(true);
+    m_statusLabel->setStyleSheet(QStringLiteral("color: #9fb0c3; padding: 6px 10px;"));
+    root->addWidget(m_statusLabel);
 
     m_scroll = new QScrollArea(this);
     m_scroll->setWidgetResizable(true);
@@ -21,48 +47,57 @@ MarketsPage::MarketsPage(QWidget *parent) : QWidget(parent) {
     m_grid->setVerticalSpacing(12);
 
     m_scroll->setWidget(m_container);
-    root->addWidget(m_scroll);
+    root->addWidget(m_scroll, 1);
+}
 
-    setDemoMarkets();
+void MarketsPage::setLoading(const QString &message) {
+    m_statusLabel->setText(message);
+    m_statusLabel->show();
+    clearCards();
+}
+
+void MarketsPage::setError(const QString &message) {
+    m_statusLabel->setText(message);
+    m_statusLabel->show();
+    clearCards();
+}
+
+void MarketsPage::setMarkets(const QVector<ApiMarket> &markets) {
+    m_allMarkets = markets;
+    render();
 }
 
 void MarketsPage::clearCards() {
     while (m_grid->count()) {
-        auto *item = m_grid->takeAt(0);
+        QLayoutItem *item = m_grid->takeAt(0);
         delete item->widget();
         delete item;
     }
 }
 
-void MarketsPage::addCard(const QString &q, const QVector<OutcomeView> &o, const QString &vol) {
+void MarketsPage::addCard(const ApiMarket &market) {
     auto *card = new MarketCardWidget(m_container);
-    card->setMarket(q, o, vol);
+    card->setMarket(market.question, toOutcomeViews(market), marketMetaText(market));
 
-    int idx = m_grid->count();
-    int cols = 2;                 // simple 2-column grid
-    int row = idx / cols;
-    int col = idx % cols;
+    const int idx = m_grid->count();
+    const int cols = 2;
+    const int row = idx / cols;
+    const int col = idx % cols;
     m_grid->addWidget(card, row, col);
 }
 
-void MarketsPage::setCategory(const QString &category) {
-    m_category = category;
-    // for now just refresh demo list (later you filter + call API)
-    setDemoMarkets();
-}
-
-void MarketsPage::setDemoMarkets() {
+void MarketsPage::render() {
     clearCards();
 
-    addCard("Who will be the next Supreme Leader of Iran?",
-            {{"Alireza Arafi", 27}, {"Position abolished", 16}},
-            "$3,483,499 vol");
+    for (const ApiMarket &market : m_allMarkets) {
+        addCard(market);
+    }
 
-    addCard("How long will the government shutdown last?",
-            {{"At least 43 days", 50}, {"At least 40 days", 53}},
-            "$2,518,143 vol");
+    if (m_allMarkets.isEmpty()) {
+        m_statusLabel->setText(QStringLiteral("No open markets were returned by the backend."));
+        m_statusLabel->show();
+        return;
+    }
 
-    addCard("Who will Trump nominate as Fed Chair?",
-            {{"Kevin Warsh", 94}, {"Judy Shelton", 4}},
-            "$202,785,117 vol");
+    m_statusLabel->hide();
 }
