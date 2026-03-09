@@ -1,22 +1,103 @@
-# Backend (Drogon + Postgres) — Setup & Run
+# Backend (Drogon + PostgreSQL)
 
-This folder contains the **HTTPS** Drogon backend (`backend_app`) and its runtime config.
+This folder contains the HTTPS Drogon backend (`backend_app`) for the prediction market project.
 
-The backend needs:
-- Postgres database (dev: Docker Compose)
-- `config/config.json` (copied next to the binary on build)
-- TLS certs: `config/certs/server.crt` and `config/certs/server.key`
+## What is implemented
 
-The repo uses **vcpkg** (as a git submodule) to install Drogon with Postgres support.
+The current REST API covers:
+
+- health checks
+- authentication with Bearer access tokens + refresh tokens
+- market lifecycle:
+  - list / get
+  - outcomes
+  - create
+  - update
+  - close
+  - resolve + settlement
+  - archive
+  - delete alias (`DELETE /admin/markets/{id}/delete`)
+- wallets:
+  - self wallet
+  - admin wallet lookup
+  - admin deposit
+- orders:
+  - create
+  - get
+  - cancel
+  - list current user orders
+  - public orderbook
+- trades:
+  - public trades by outcome
+  - current user trades
+- portfolio:
+  - current positions
+  - unified ledger feed
+
+## Stack
+
+- C++ / Drogon
+- PostgreSQL
+- CMake + Ninja
+- vcpkg
+- HTTPS enabled in dev with self-signed certificates
 
 ---
 
-## Quick sanity check (after everything is running)
+## Quick smoke check
+
+After the backend and database are running:
 
 ```bash
 curl -k https://localhost:8443/healthz
 curl -k https://localhost:8443/healthz/db
+curl -k https://localhost:8443/markets
 ```
+
+---
+
+## Authentication model
+
+The API now uses **Bearer access tokens** for user-scoped and admin-scoped requests.
+
+### User auth flow
+
+1. `POST /auth/register` or `POST /auth/login`
+2. Read `access_token` and `refresh_token` from the JSON response
+3. Send:
+   ```http
+   Authorization: Bearer <access_token>
+   ```
+4. When access token expires, call `POST /auth/refresh` with the refresh token
+5. To invalidate a session, call `POST /auth/logout`
+
+### Admin auth
+
+Admin endpoints do **not** use `X-Admin-Token` anymore.
+
+A request is treated as admin-only when:
+
+- it has a valid Bearer access token
+- the authenticated user has `role = admin`
+
+If you need an admin user in dev, update the user's role in PostgreSQL, for example:
+
+```sql
+UPDATE users
+SET role = 'admin'
+WHERE email = 'admin@example.com';
+```
+
+### Token TTL environment variables
+
+Optional environment variables:
+
+```bash
+PM_ACCESS_TTL_MINUTES=15
+PM_REFRESH_TTL_DAYS=30
+```
+
+If unset, the backend uses those defaults.
 
 ---
 
@@ -25,23 +106,27 @@ curl -k https://localhost:8443/healthz/db
 ### 1) Prerequisites
 
 Install:
-- Xcode / Command Line Tools (Apple Clang)
-- CMake (>= 3.26) + Ninja
-- Docker Desktop (for Postgres dev DB)
-- OpenSSL (for generating dev certs)
-- autoconf (needed by vcpkg when building libpq on macOS)
+
+- Xcode / Command Line Tools
+- CMake (>= 3.26)
+- Ninja
+- Docker Desktop
+- OpenSSL
+- autoconf
 
 Homebrew example:
+
 ```bash
 brew install cmake ninja autoconf openssl
 ```
 
-### 2) Clone + init submodules (vcpkg)
+### 2) Clone + init submodules
 
 ```bash
 git clone --recurse-submodules https://github.com/valyrianshepherd1/prediction-market.git
 cd prediction-market
-# if you didn't use --recurse-submodules:
+
+# if needed:
 git submodule update --init --recursive
 ```
 
@@ -53,32 +138,33 @@ git submodule update --init --recursive
 
 ### 4) Generate dev HTTPS certs
 
-Generates:
-- `backend/config/certs/server.crt`
-- `backend/config/certs/server.key`
-
 ```bash
 chmod +x scripts/gen_dev_certs.sh
 ./scripts/gen_dev_certs.sh
 ```
 
-### 5) Start Postgres (Docker) + apply migrations
+Generated files:
+
+- `backend/config/certs/server.crt`
+- `backend/config/certs/server.key`
+
+### 5) Start Postgres + apply migrations
 
 ```bash
 chmod +x scripts/dev_db_up.sh
 ./scripts/dev_db_up.sh
 ```
 
-Optional: seed dev markets
+Optional seed script:
+
 ```bash
 chmod +x scripts/db_seed_dev.sh
 ./scripts/db_seed_dev.sh
 ```
 
-### 6) Build backend (recommended: build backend only)
+### 6) Build backend
 
-> Building from the repo root also configures the Qt frontend.  
-> For backend-only development, configure **only** the `backend/` folder:
+Recommended backend-only configure/build:
 
 ```bash
 cmake -S backend -B build-backend-macos -G Ninja \
@@ -95,23 +181,10 @@ cmake --build build-backend-macos
 ./build-backend-macos/backend_app
 ```
 
-Config discovery order:
-1) `--config <path>`
-2) env `PM_CONFIG`
-3) `./config/config.json` next to the binary
-4) `./config/config.json` from current working dir
-5) `./backend/config/config.json` from repo root
+Explicit config example:
 
-If you want to be explicit:
 ```bash
 ./build-backend-macos/backend_app --config "$PWD/backend/config/config.json"
-```
-
-### 8) (Optional) Enable admin endpoints
-
-Admin endpoints require header `X-Admin-Token` and this env var:
-```bash
-export PM_ADMIN_TOKEN="dev_admin_token_123"
 ```
 
 ---
@@ -121,16 +194,16 @@ export PM_ADMIN_TOKEN="dev_admin_token_123"
 ### 1) Prerequisites
 
 Install:
+
 - CMake (>= 3.26)
 - Ninja
-- Git 
-- Docker Desktop (for Postgres dev DB)
-- OpenSSL (for generating dev certs; Chocolatey or MSYS2)
-- PowerShell 
+- Git
+- Docker Desktop
+- OpenSSL
+- PowerShell
 
-### 2) Clone + init submodules (vcpkg)
+### 2) Clone + init submodules
 
-PowerShell:
 ```powershell
 git clone --recurse-submodules https://github.com/valyrianshepherd1/prediction-market.git
 cd prediction-market
@@ -145,22 +218,18 @@ git submodule update --init --recursive
 
 ### 4) Generate dev HTTPS certs
 
-Generates:
-- `backend\config\certs\server.crt`
-- `backend\config\certs\server.key`
-
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\gen_dev_certs.ps1
 ```
 
-### 5) Start Postgres (Docker) + apply migrations
+### 5) Start Postgres + apply migrations
 
-Option A: run the helper (may require a `bash` on PATH):
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\dev_db_up.ps1
 ```
 
-Option B: do it manually (no bash needed):
+Or manually:
+
 ```powershell
 cd .\deploy
 docker compose up -d
@@ -168,12 +237,7 @@ cd ..
 powershell -ExecutionPolicy Bypass -File .\scripts\db_migrate.ps1
 ```
 
-Optional: seed dev markets
-```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\db_seed_dev.ps1
-```
-
-### 6) Build backend (recommended: build backend only)
+### 6) Build backend
 
 ```powershell
 cmake -S backend -B build-backend-windows -G Ninja `
@@ -183,20 +247,73 @@ cmake -S backend -B build-backend-windows -G Ninja `
 
 cmake --build build-backend-windows
 ```
+
 ### 7) Run backend
 
-
-(folder with binaries)
 ```powershell
-.\cmake-dev-build-debug-macos\backend\backend_app.exe
-```
-
-
-### 8) (Optional) Enable admin endpoints
-
-```powershell
-$env:PM_ADMIN_TOKEN = "dev_admin_token_123"
+.\build-backend-windows\backend_app.exe
 ```
 
 ---
 
+## Config discovery order
+
+At runtime the backend searches config in this order:
+
+1. `--config <path>`
+2. environment variable `PM_CONFIG`
+3. `./config/config.json` next to the binary
+4. `./config/config.json` from the current working directory
+5. `./backend/config/config.json` from the repo root
+
+---
+
+## Recommended dev flow
+
+1. Start Postgres
+2. Apply migrations
+3. Build backend
+4. Run backend
+5. Register a user
+6. Promote one dev user to `role = admin`
+7. Use admin Bearer token for market creation / deposits / lifecycle actions
+8. Run the integration script:
+   ```bash
+   ./scripts/check_all.sh --deep
+   ```
+
+---
+
+## Handy auth smoke commands
+
+### Register
+
+```bash
+curl -k https://localhost:8443/auth/register \
+  -H "Content-Type: application/json" \
+  -d '{
+    "email":"user@example.com",
+    "username":"user1",
+    "password":"password123"
+  }'
+```
+
+### Login
+
+```bash
+curl -k https://localhost:8443/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{
+    "login":"user@example.com",
+    "password":"password123"
+  }'
+```
+
+### Me
+
+```bash
+curl -k https://localhost:8443/me \
+  -H "Authorization: Bearer <access_token>"
+```
+
+See `docs/api.md` for the full endpoint reference.

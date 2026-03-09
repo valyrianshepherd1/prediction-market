@@ -1,44 +1,55 @@
-# Backend REST API (v0) — Prediction Market
-
----
+# Backend REST API (current)
 
 ## Base URL
 
-**Dev default:**
+Dev default:
 
 - `https://localhost:8443`
 
-**Health check:**
+Health checks:
 
-- `GET https://localhost:8443/healthz`
+- `GET /healthz`
+- `GET /healthz/db`
 
-> HTTPS is enabled with a **self‑signed** certificate in dev. See “TLS / self‑signed cert” below.
+Dev uses HTTPS with a self-signed certificate, so most curl commands need `-k`.
 
 ---
 
-## Authentication (temporary)
+## Authentication
 
-### User-scoped requests
+### Bearer access token
 
-For user-specific endpoints and order actions you must send:
+User-scoped and admin-scoped endpoints require:
 
-- Header: `X-User-Id: <string>`
-
-Example:
-```
-X-User-Id: user_1
+```http
+Authorization: Bearer <access_token>
 ```
 
-### Admin requests
+Access tokens are returned by:
+
+- `POST /auth/register`
+- `POST /auth/login`
+- `POST /auth/refresh`
+
+### Refresh token
+
+Refresh and logout use a JSON body with `refresh_token`.
+
+### Admin authorization
 
 Admin endpoints require:
 
-- Backend environment variable: `PM_ADMIN_TOKEN=<secret>`
-- Request header: `X-Admin-Token: <secret>`
+- a valid Bearer access token
+- authenticated user role = `admin`
 
-Example:
-```
-X-Admin-Token: dev_admin_token_123
+If a valid token is present but the role is not admin, the API returns `403`.
+
+### Error shape
+
+Errors use:
+
+```json
+{ "error": "message" }
 ```
 
 ---
@@ -46,43 +57,67 @@ X-Admin-Token: dev_admin_token_123
 ## Data conventions
 
 ### IDs
-All IDs are strings (UUIDs in the database).
 
-### Money / quantity / price
+All IDs are UUID strings.
 
-- `amount` (wallet deposit): **int64**
-- `qty_micros` (order quantity): **int64**
-- `price_bp` (order price): **int** in **basis points**
-  - `100`  = 1.00%
-  - `5000` = 50.00%
-  - `10000` = 100.00%
+### Numeric fields
 
-### Error response shape
+- `amount`: signed int64
+- `qty_micros`: int64
+- `price_bp`: int (basis points)
+- `delta_available`: int64
+- `delta_reserved`: int64
 
-For errors, the server returns JSON:
-```json
-{ "error": "message" }
-```
+### Market statuses
+
+Current market statuses:
+
+- `OPEN`
+- `CLOSED`
+- `RESOLVED`
+- `ARCHIVED`
+
+`GET /markets` hides archived markets by default. Use `?status=ARCHIVED` to list them explicitly.
 
 ---
 
-## Endpoint list (index)
+## Endpoint index
 
 ### Health
+
 - `GET /healthz`
 - `GET /healthz/db`
 
+### Auth
+
+- `POST /auth/register`
+- `POST /auth/login`
+- `POST /auth/refresh`
+- `POST /auth/logout`
+- `GET /me`
+
 ### Markets
+
 - `GET /markets`
 - `GET /markets/{marketId}`
 - `GET /markets/{marketId}/outcomes`
 - `POST /admin/markets`
+- `PATCH /admin/markets/{marketId}`
+- `POST /admin/markets/{marketId}/close`
+- `POST /admin/markets/{marketId}/resolve`
+- `POST /admin/markets/{marketId}/archive`
+- `DELETE /admin/markets/{marketId}/delete`
 
-### Wallets
+### Wallets / Portfolio
+
+- `GET /wallet`
 - `GET /wallets/{userId}`
 - `POST /admin/deposit`
+- `GET /portfolio`
+- `GET /ledger`
 
 ### Orders
+
 - `POST /orders`
 - `GET /orders/{orderId}`
 - `DELETE /orders/{orderId}`
@@ -90,45 +125,176 @@ For errors, the server returns JSON:
 - `GET /outcomes/{outcomeId}/orderbook`
 
 ### Trades
+
 - `GET /outcomes/{outcomeId}/trades`
 - `GET /me/trades`
 
 ---
 
-# Detailed endpoint reference
+# Detailed reference
 
 ## Health
 
 ### GET `/healthz`
-Checks that the backend process is alive.
 
-**Headers:** none
+Backend liveness probe.
 
-**Response 200**
+**Auth:** none
+
+**200**
 ```json
 { "status": "ok" }
+```
+
+### GET `/healthz/db`
+
+Database connectivity probe.
+
+**Auth:** none
+
+**200**
+```json
+{ "status": "ok" }
+```
+
+**500 / 503**
+```json
+{ "status": "fail", "error": "..." }
 ```
 
 ---
 
-### GET `/healthz/db`
-Checks DB connectivity (runs a simple `SELECT 1`).
+## Auth
 
-**Headers:** none
+### POST `/auth/register`
 
-**Response 200**
+Create a user and immediately open a session.
+
+**Auth:** none
+
+**Body**
 ```json
-{ "status": "ok" }
+{
+  "email": "user@example.com",
+  "username": "user1",
+  "password": "password123"
+}
 ```
 
-**Response 503** (DB query failed)
+**Rules**
+- `email`: email-like string
+- `username`: 3..50 chars
+- `password`: 8..200 chars
+
+**201**
 ```json
-{ "status": "fail", "error": "…" }
+{
+  "session_id": "uuid",
+  "user": {
+    "id": "uuid",
+    "email": "user@example.com",
+    "username": "user1",
+    "role": "user",
+    "created_at": "..."
+  },
+  "token_type": "Bearer",
+  "access_token": "token",
+  "access_expires_at": "...",
+  "refresh_token": "token",
+  "refresh_expires_at": "..."
+}
 ```
 
-**Response 500** (DB client not configured/available)
+**409**
 ```json
-{ "status": "fail", "error": "db client not available: …" }
+{ "error": "email or username already exists" }
+```
+
+### POST `/auth/login`
+
+Log in by `login`, `email`, or `username`.
+
+**Auth:** none
+
+**Body**
+```json
+{
+  "login": "user@example.com",
+  "password": "password123"
+}
+```
+
+Aliases:
+- `email`
+- `username`
+
+**200**
+Same response shape as register.
+
+**401**
+```json
+{ "error": "invalid credentials" }
+```
+
+### POST `/auth/refresh`
+
+Refresh access + refresh tokens from a valid refresh token.
+
+**Auth:** none
+
+**Body**
+```json
+{
+  "refresh_token": "token"
+}
+```
+
+**200**
+Same response shape as login.
+
+**401**
+```json
+{ "error": "invalid or expired refresh token" }
+```
+
+### POST `/auth/logout`
+
+Invalidate a refresh token / session.
+
+**Auth:** none
+
+**Body**
+```json
+{
+  "refresh_token": "token"
+}
+```
+
+**200**
+```json
+{ "ok": true }
+```
+
+### GET `/me`
+
+Return the currently authenticated principal.
+
+**Auth:** Bearer
+
+**200**
+```json
+{
+  "id": "uuid",
+  "email": "user@example.com",
+  "username": "user1",
+  "role": "user",
+  "created_at": "..."
+}
+```
+
+**401**
+```json
+{ "error": "Authorization: Bearer <token> is required" }
 ```
 
 ---
@@ -136,195 +302,339 @@ Checks DB connectivity (runs a simple `SELECT 1`).
 ## Markets
 
 ### GET `/markets`
-Lists markets (paged), optionally filtered by status.
 
-**Headers:** none
+List markets.
 
-**Query params:**
-- `limit` (int, default `50`, min `1`, max `200`)
-- `offset` (int, default `0`)
-- `status` (optional): `OPEN | CLOSED | RESOLVED`
+**Auth:** none
 
-**Response 200**
+**Query params**
+- `limit` (default `50`, min `1`, max `200`)
+- `offset` (default `0`)
+- `status` (optional): `OPEN | CLOSED | RESOLVED | ARCHIVED`
+
+**Notes**
+- If `status` is omitted, archived markets are excluded.
+- If `status=ARCHIVED`, archived markets are returned explicitly.
+
+**200**
 ```json
 [
   {
-    "id": "…",
+    "id": "uuid",
     "question": "Will X happen?",
     "status": "OPEN",
     "resolved_outcome_id": null,
-    "created_at": "…"
+    "created_at": "..."
   }
 ]
 ```
 
-**Response 400** (bad paging/status)
-```json
-{ "error": "…" }
-```
-
-Example:
-```
-GET /markets?status=OPEN&limit=50&offset=0
-```
-
----
-
 ### GET `/markets/{marketId}`
-Fetch a single market by ID.
 
-**Headers:** none
+Get one market.
 
-**Path params:**
-- `marketId` (string)
+**Auth:** none
 
-**Response 200**
+**200**
 ```json
 {
-  "id": "…",
+  "id": "uuid",
   "question": "Will X happen?",
   "status": "OPEN",
   "resolved_outcome_id": null,
-  "created_at": "…"
+  "created_at": "..."
 }
 ```
 
-**Response 404**
+**404**
 ```json
 { "error": "market not found" }
 ```
 
----
-
 ### GET `/markets/{marketId}/outcomes`
-Lists outcomes for a market.
 
-**Headers:** none
+List outcomes for a market.
 
-**Path params:**
-- `marketId` (string)
+**Auth:** none
 
-**Response 200**
+**200**
 ```json
 [
   {
-    "id": "…",
-    "market_id": "…",
+    "id": "uuid",
+    "market_id": "uuid",
     "title": "YES",
     "outcome_index": 0
   },
   {
-    "id": "…",
-    "market_id": "…",
+    "id": "uuid",
+    "market_id": "uuid",
     "title": "NO",
     "outcome_index": 1
   }
 ]
 ```
 
----
-
 ### POST `/admin/markets`
-Creates a new market (admin-only).
 
-**Headers:**
-- `X-Admin-Token: …`
+Create a market with outcomes.
 
-**Body (JSON):**
-- `question` (string, 3..300 chars) — required  
-- `title` is accepted as an alias for `question`
+**Auth:** Bearer admin
 
-Example body:
-```json
-{ "question": "Will X happen?" }
-```
-
-**Response 201**
+**Body**
 ```json
 {
-  "id": "…",
-  "question": "Will X happen?",
+  "question": "Will BTC be above 100k by Dec 31?",
+  "outcomes": ["YES", "NO"]
+}
+```
+
+Accepted aliases:
+- `title` instead of `question`
+- `outcome_titles` instead of `outcomes`
+
+If outcomes are omitted, defaults are:
+
+```json
+["YES", "NO"]
+```
+
+**Validation**
+- question: 3..300 chars
+- outcomes count: 2..10
+- each title: 1..80 chars
+- outcome titles must be unique
+
+**201**
+```json
+{
+  "id": "uuid",
+  "question": "Will BTC be above 100k by Dec 31?",
   "status": "OPEN",
   "resolved_outcome_id": null,
-  "created_at": "…"
+  "created_at": "...",
+  "outcomes": [
+    {
+      "id": "uuid",
+      "market_id": "uuid",
+      "title": "YES",
+      "outcome_index": 0
+    },
+    {
+      "id": "uuid",
+      "market_id": "uuid",
+      "title": "NO",
+      "outcome_index": 1
+    }
+  ]
 }
 ```
 
-**Response 401**
+### PATCH `/admin/markets/{marketId}`
+
+Update question and/or status.
+
+**Auth:** Bearer admin
+
+**Body**
 ```json
-{ "error": "admin token missing or invalid" }
+{
+  "question": "New question",
+  "status": "OPEN"
+}
 ```
 
-**Response 400**
+Allowed status values here:
+- `OPEN`
+- `CLOSED`
+
+Use:
+- `/resolve` for `RESOLVED`
+- `/archive` for `ARCHIVED`
+
+**200**
+Returns the updated market object.
+
+**409**
+Possible examples:
 ```json
-{ "error": "expected JSON body" }
+{ "error": "resolved market cannot be updated" }
 ```
 
-> Current limitation (MVP): this creates the **market row**, but outcomes may be created separately (via seeds/migrations/manual DB).  
-> If you need “create market with outcomes” in one request — that’s a good next backend task.
+### POST `/admin/markets/{marketId}/close`
+
+Close a market.
+
+**Auth:** Bearer admin
+
+**200**
+Returns the closed market object.
+
+**409**
+Possible examples:
+```json
+{ "error": "resolved market cannot be closed" }
+```
+
+### POST `/admin/markets/{marketId}/resolve`
+
+Resolve a market and trigger settlement.
+
+**Auth:** Bearer admin
+
+**Body**
+```json
+{
+  "winning_outcome_id": "uuid"
+}
+```
+
+Alias accepted:
+- `outcome_id`
+
+**200**
+Returns the resolved market:
+```json
+{
+  "id": "uuid",
+  "question": "...",
+  "status": "RESOLVED",
+  "resolved_outcome_id": "uuid",
+  "created_at": "..."
+}
+```
+
+**400**
+```json
+{ "error": "winning_outcome_id does not belong to market" }
+```
+
+### POST `/admin/markets/{marketId}/archive`
+
+Archive a market.
+
+**Auth:** Bearer admin
+
+**200**
+Returns the archived market object.
+
+**409**
+Possible example:
+```json
+{ "error": "resolved market cannot be archived" }
+```
+
+### DELETE `/admin/markets/{marketId}/delete`
+
+Delete alias for archive.
+
+**Auth:** Bearer admin
+
+**Behavior**
+This is a soft-delete alias: it archives the market.
+
+**200**
+Returns the archived market object.
 
 ---
 
-## Wallets
+## Wallets / Portfolio
 
-### GET `/wallets/{userId}`
-Returns wallet info for a user.
+### GET `/wallet`
 
-**Headers:** none (MVP)
+Get the authenticated user's wallet.
 
-**Path params:**
-- `userId` (string)
+**Auth:** Bearer
 
-**Response 200**
+**200**
 ```json
 {
-  "user_id": "user_1",
+  "user_id": "uuid",
   "available": 1000000,
   "reserved": 0,
-  "updated_at": "…"
+  "updated_at": "..."
 }
 ```
 
-**Response 404**
-```json
-{ "error": "wallet not found" }
-```
+### GET `/wallets/{userId}`
 
----
+Get any user's wallet.
+
+**Auth:** Bearer admin
+
+**200**
+Same shape as `/wallet`.
 
 ### POST `/admin/deposit`
-Admin-only deposit (top-up) for a user wallet.
 
-**Headers:**
-- `X-Admin-Token: …`
+Admin deposit / top-up.
 
-**Body (JSON):**
-- `user_id` (string) — required
-- `amount` (int64) — can be positive (deposit). If negative is allowed depends on service validation.
+**Auth:** Bearer admin
 
-Example:
-```json
-{ "user_id": "user_1", "amount": 1000000 }
-```
-
-**Response 200**
+**Body**
 ```json
 {
-  "user_id": "user_1",
-  "available": 2000000,
-  "reserved": 0,
-  "updated_at": "…"
+  "user_id": "uuid",
+  "amount": 1000000
 }
 ```
 
-**Response 401**
+**200**
+Returns the updated wallet.
+
+### GET `/portfolio`
+
+List the authenticated user's positions.
+
+**Auth:** Bearer
+
+**Query params**
+- `limit` (default `50`)
+- `offset` (default `0`)
+
+**200**
 ```json
-{ "error": "admin token missing or invalid" }
+[
+  {
+    "user_id": "uuid",
+    "outcome_id": "uuid",
+    "market_id": "uuid",
+    "market_question": "Will X happen?",
+    "outcome_title": "YES",
+    "outcome_index": 0,
+    "shares_available": 1000000,
+    "shares_reserved": 0,
+    "shares_total": 1000000,
+    "updated_at": "..."
+  }
+]
 ```
 
-**Response 400**
+### GET `/ledger`
+
+Unified ledger feed for the authenticated user.
+
+**Auth:** Bearer
+
+**Query params**
+- `limit` (default `50`)
+- `offset` (default `0`)
+
+**200**
 ```json
-{ "error": "user_id is required" }
+[
+  {
+    "id": "uuid",
+    "ledger_type": "CASH",
+    "kind": "SETTLEMENT",
+    "outcome_id": null,
+    "delta_available": 1000000,
+    "delta_reserved": 0,
+    "ref_type": "MARKET",
+    "ref_id": "uuid",
+    "created_at": "..."
+  }
+]
 ```
 
 ---
@@ -332,131 +642,89 @@ Example:
 ## Orders
 
 ### POST `/orders`
-Creates an order and immediately attempts matching.
 
-**Headers:**
-- `X-User-Id: …` (required)
+Create an order and immediately attempt matching.
 
-**Body (JSON):**
-- `outcome_id` (string) — required
-- `side` (string) — required: `"BUY"` or `"SELL"`
-- `qty_micros` (int64) — required, must be > 0
-- `price_bp` (int, optional, default 0)
+**Auth:** Bearer
 
-Example:
+**Body**
 ```json
 {
-  "outcome_id": "…",
+  "outcome_id": "uuid",
   "side": "BUY",
   "price_bp": 5200,
   "qty_micros": 250000
 }
 ```
 
-**Response 201**
+**Required**
+- `outcome_id`
+- `side`
+- `qty_micros > 0`
+
+**201**
 ```json
 {
-  "id": "…",
-  "user_id": "user_1",
-  "outcome_id": "…",
+  "id": "uuid",
+  "user_id": "uuid",
+  "outcome_id": "uuid",
   "side": "BUY",
   "price_bp": 5200,
   "qty_total_micros": 250000,
   "qty_remaining_micros": 250000,
   "status": "OPEN",
-  "created_at": "…",
-  "updated_at": "…"
+  "created_at": "...",
+  "updated_at": "..."
 }
 ```
-
-**Response 401**
-```json
-{ "error": "X-User-Id header is required (temporary auth)" }
-```
-
-**Response 400**
-```json
-{ "error": "outcome_id, side, qty_micros are required" }
-```
-
----
-
-### GET `/outcomes/{outcomeId}/orderbook`
-Returns order book for the given outcome.
-
-**Headers:** none
-
-**Path params:**
-- `outcomeId` (string)
-
-**Query params:**
-- `depth` (int, default 50)
-
-**Response 200**
-```json
-{
-  "buy": [ /* array of orders */ ],
-  "sell": [ /* array of orders */ ]
-}
-```
-
-Each order object has the same shape as in `POST /orders` response.
-
----
-
-### GET `/me/orders`
-Lists current user orders (paged).
-
-**Headers:**
-- `X-User-Id: …` (required)
-
-**Query params:**
-- `limit` (int, default 50)
-- `offset` (int, default 0)
-- `status` (optional string) — example: `OPEN`, `CANCELED`, etc.
-
-**Response 200**
-```json
-[
-  { "id": "…", "user_id": "…", "outcome_id": "…", "side": "BUY", "price_bp": 5200, "qty_total_micros": 250000,
-    "qty_remaining_micros": 250000, "status": "OPEN", "created_at": "…", "updated_at": "…" }
-]
-```
-
----
 
 ### GET `/orders/{orderId}`
-Returns order by ID, only if owned by current user.
 
-**Headers:**
-- `X-User-Id: …` (required)
+Get one of the authenticated user's orders.
 
-**Path params:**
-- `orderId` (string)
+**Auth:** Bearer
 
-**Response 200**: order JSON
-
-**Response 404**
-```json
-{ "error": "order not found" }
-```
-
----
+**200**
+Same shape as order creation response.
 
 ### DELETE `/orders/{orderId}`
-Cancels an order, only if owned by current user.
 
-**Headers:**
-- `X-User-Id: …` (required)
+Cancel one of the authenticated user's orders.
 
-**Path params:**
-- `orderId` (string)
+**Auth:** Bearer
 
-**Response 200**: order JSON (status changed to canceled / released in DB)
+**200**
+Returns the updated order object.
 
-**Response 404**
+### GET `/me/orders`
+
+List the authenticated user's orders.
+
+**Auth:** Bearer
+
+**Query params**
+- `limit` (default `50`)
+- `offset` (default `0`)
+- `status` (optional)
+
+**200**
+Array of order objects.
+
+### GET `/outcomes/{outcomeId}/orderbook`
+
+Public order book for an outcome.
+
+**Auth:** none
+
+**Query params**
+- `depth` (default `50`)
+
+**200**
 ```json
-{ "error": "order not found" }
+{
+  "buy": [ /* order objects */ ],
+  "sell": [ /* order objects */ ]
+}
 ```
 
 ---
@@ -464,65 +732,57 @@ Cancels an order, only if owned by current user.
 ## Trades
 
 ### GET `/outcomes/{outcomeId}/trades`
-Lists trades for an outcome (paged).
 
-**Headers:** none
+Public trades for an outcome.
 
-**Path params:**
-- `outcomeId` (string)
+**Auth:** none
 
-**Query params:**
-- `limit` (int, default 50)
-- `offset` (int, default 0)
+**Query params**
+- `limit` (default `50`)
+- `offset` (default `0`)
 
-**Response 200**
+**200**
 ```json
 [
   {
-    "id": "…",
-    "outcome_id": "…",
-    "maker_user_id": "…",
-    "taker_user_id": "…",
-    "maker_order_id": "…",
-    "taker_order_id": "…",
-    "price_bp": 5200,
-    "qty_micros": 250000,
-    "created_at": "…"
+    "id": "uuid",
+    "outcome_id": "uuid",
+    "maker_user_id": "uuid",
+    "taker_user_id": "uuid",
+    "maker_order_id": "uuid",
+    "taker_order_id": "uuid",
+    "price_bp": 6000,
+    "qty_micros": 1000000,
+    "created_at": "..."
   }
 ]
 ```
 
----
-
 ### GET `/me/trades`
-Lists trades for current user (paged).
 
-**Headers:**
-- `X-User-Id: …` (required)
+List the authenticated user's trades.
 
-**Query params:**
-- `limit` (int, default 50)
-- `offset` (int, default 0)
+**Auth:** Bearer
 
-**Response 200**: array of trade JSON objects (same shape as above)
+**Query params**
+- `limit` (default `50`)
+- `offset` (default `0`)
+
+**200**
+Array of trade objects.
 
 ---
 
-## TLS / self-signed cert (dev)
+## Common auth failures
 
-### curl (dev)
-Skip verification:
-```bash
-curl -k https://localhost:8443/healthz
+### Missing or malformed bearer token
+
+```json
+{ "error": "Authorization: Bearer <token> is required" }
 ```
 
-### Qt (dev)
-Two typical approaches:
+### Valid token, but not admin
 
-1) **Trust the certificate** (preferred dev approach):
-- ship `server.crt` with the app and add it to Qt’s CA list.
-
-2) **Disable verification** (fast, dev-only):
-- connect `QNetworkReply::sslErrors` and call `reply->ignoreSslErrors()`.
-
-> Do NOT ignore SSL errors in production.
+```json
+{ "error": "admin role is required" }
+```
