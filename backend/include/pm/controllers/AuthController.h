@@ -9,6 +9,7 @@ public:
         ADD_METHOD_TO(AuthController::login, "/auth/login", drogon::Post);
         ADD_METHOD_TO(AuthController::refresh, "/auth/refresh", drogon::Post);
         ADD_METHOD_TO(AuthController::logout, "/auth/logout", drogon::Post);
+        ADD_METHOD_TO(AuthController::me, "/me", drogon::Get);
     METHOD_LIST_END
 
     void registerUser(const drogon::HttpRequestPtr &req,
@@ -22,4 +23,7 @@ public:
 
     void logout(const drogon::HttpRequestPtr &req,
                 std::function<void(const drogon::HttpResponsePtr &)> &&cb) const;
+
+    void me(const drogon::HttpRequestPtr &req,
+            std::function<void(const drogon::HttpResponsePtr &)> &&cb) const;
 };

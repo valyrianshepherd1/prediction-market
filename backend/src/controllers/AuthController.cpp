@@ -3,6 +3,7 @@
 #include "pm/repositories/AuthRepository.h"
 #include "pm/services/AuthService.h"
 #include "pm/util/ApiError.h"
+#include "pm/util/AuthGuard.h"
 
 #include <charconv>
 #include <cstdlib>
@@ -61,9 +62,37 @@ int refreshTtlDays() {
     return out;
 }
 
+int accessTtlMinutes() {
+    int out = 15;
+    const char *raw = std::getenv("PM_ACCESS_TTL_MINUTES");
+    if (!raw || std::string_view(raw).empty()) {
+        return out;
+    }
+
+    int parsed = 0;
+    const auto view = std::string_view(raw);
+    const auto *begin = view.data();
+    const auto *end = view.data() + view.size();
+    const auto [ptr, ec] = std::from_chars(begin, end, parsed);
+    if (ec == std::errc{} && ptr == end && parsed > 0 && parsed <= 24 * 60) {
+        out = parsed;
+    }
+    return out;
+}
+
 Json::Value userToJson(const AuthUserRow &u) {
     Json::Value j;
     j["id"] = u.id;
+    j["email"] = u.email;
+    j["username"] = u.username;
+    j["role"] = u.role;
+    j["created_at"] = u.created_at;
+    return j;
+}
+
+Json::Value principalToJson(const pm::auth::Principal &u) {
+    Json::Value j;
+    j["id"] = u.user_id;
     j["email"] = u.email;
     j["username"] = u.username;
     j["role"] = u.role;
@@ -75,7 +104,9 @@ Json::Value sessionToJson(const AuthSessionRow &s) {
     Json::Value j;
     j["session_id"] = s.session_id;
     j["user"] = userToJson(s.user);
-    j["x_user_id"] = s.user.id;
+    j["token_type"] = "Bearer";
+    j["access_token"] = s.access_token;
+    j["access_expires_at"] = s.access_expires_at;
     j["refresh_token"] = s.refresh_token;
     j["refresh_expires_at"] = s.refresh_expires_at;
     return j;
@@ -116,6 +147,7 @@ void AuthController::registerUser(const drogon::HttpRequestPtr &req,
         email,
         username,
         password,
+        accessTtlMinutes(),
         refreshTtlDays(),
         [cbp](AuthSessionRow session) {
             (*cbp)(jsonOk(sessionToJson(session), drogon::k201Created));
@@ -157,6 +189,7 @@ void AuthController::login(const drogon::HttpRequestPtr &req,
     svc.login(
         loginValue,
         password,
+        accessTtlMinutes(),
         refreshTtlDays(),
         [cbp](AuthSessionRow session) {
             (*cbp)(jsonOk(sessionToJson(session)));
@@ -192,6 +225,7 @@ void AuthController::refresh(const drogon::HttpRequestPtr &req,
     AuthService svc{AuthRepository{db}};
     svc.refresh(
         token,
+        accessTtlMinutes(),
         refreshTtlDays(),
         [cbp](AuthSessionRow session) {
             (*cbp)(jsonOk(sessionToJson(session)));
@@ -231,6 +265,25 @@ void AuthController::logout(const drogon::HttpRequestPtr &req,
             Json::Value j;
             j["ok"] = true;
             (*cbp)(jsonOk(j));
+        },
+        [cbp](const drogon::orm::DrogonDbException &e) {
+            (*cbp)(pm::jsonError({drogon::k503ServiceUnavailable, e.base().what()}));
+        });
+}
+
+void AuthController::me(const drogon::HttpRequestPtr &req,
+                        std::function<void(const drogon::HttpResponsePtr &)> &&cb) const {
+    auto cbp = std::make_shared<std::function<void(const HttpResponsePtr &)>> (std::move(cb));
+
+    pm::auth::requireAuthenticatedUser(
+        req,
+        [cbp](pm::auth::Principal principal) {
+            auto resp = HttpResponse::newHttpJsonResponse(principalToJson(principal));
+            resp->setStatusCode(drogon::k200OK);
+            (*cbp)(resp);
+        },
+        [cbp](const pm::ApiError &e) {
+            (*cbp)(pm::jsonError(e));
         },
         [cbp](const drogon::orm::DrogonDbException &e) {
             (*cbp)(pm::jsonError({drogon::k503ServiceUnavailable, e.base().what()}));

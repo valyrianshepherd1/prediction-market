@@ -3,6 +3,7 @@
 #include "pm/repositories/WalletRepository.h"
 #include "pm/services/WalletService.h"
 #include "pm/util/ApiError.h"
+#include "pm/util/AuthGuard.h"
 
 #include <cstdlib>
 #include <memory>
@@ -14,26 +15,8 @@ using drogon::HttpResponse;
 using drogon::HttpResponsePtr;
 
 namespace {
+using ResponseCallback = std::function<void(const drogon::HttpResponsePtr &)>;
 
-pm::ApiError requireAdmin(const drogon::HttpRequestPtr &req) {
-    const char *expected = std::getenv("PM_ADMIN_TOKEN");
-    if (!expected || std::string_view(expected).empty()) {
-        return {drogon::k401Unauthorized, "admin token is not configured"};
-    }
-    const auto token = req->getHeader("X-Admin-Token");
-    if (token.empty() || token != expected) {
-        return {drogon::k401Unauthorized, "admin token missing or invalid"};
-    }
-    return {drogon::k200OK, ""};
-}
-
-pm::ApiError requireUserId(const drogon::HttpRequestPtr &req, std::string &outUserId) {
-    outUserId = req->getHeader("X-User-Id");
-    if (outUserId.empty()) {
-        return {drogon::k401Unauthorized, "X-User-Id header is required (temporary auth)"};
-    }
-    return {drogon::k200OK, ""};
-}
 
 drogon::orm::DbClientPtr getDbOrNull(std::string &err) {
     try {
@@ -55,73 +38,86 @@ Json::Value walletToJson(const WalletRow &w) {
 
 }  // namespace
 
-bool WalletController::isAdmin(const drogon::HttpRequestPtr &req) {
-    return requireAdmin(req).code == drogon::k200OK;
+bool WalletController::isAdmin(const drogon::HttpRequestPtr &) {
+    return false;
 }
 
 pm::ApiError WalletController::adminAuthError() {
-    return {drogon::k401Unauthorized, "admin token missing or invalid"};
+    return {drogon::k401Unauthorized, "admin bearer token missing or invalid"};
 }
 
 void WalletController::getMyWallet(
     const drogon::HttpRequestPtr &req,
     std::function<void(const drogon::HttpResponsePtr &)> &&cb) const {
-    auto cbp =
-        std::make_shared<std::function<void(const drogon::HttpResponsePtr &)>>(std::move(cb));
+    auto cbp = std::make_shared<ResponseCallback>(std::move(cb));
 
-    std::string userId;
-    if (auto e = requireUserId(req, userId); !e) {
-        return (*cbp)(pm::jsonError(e));
-    }
-
-    std::string dbErr;
-    auto db = getDbOrNull(dbErr);
-    if (!db) {
-        return (*cbp)(pm::jsonError(
-            {drogon::k500InternalServerError, "db client not available: " + dbErr}));
-    }
-
-    WalletService svc{WalletRepository{db}};
-    svc.getWallet(
-        userId,
-        [cbp](std::optional<WalletRow> w) {
-            if (!w) {
-                return (*cbp)(pm::jsonError({drogon::k404NotFound, "wallet not found"}));
+    pm::auth::requireAuthenticatedUser(
+        req,
+        [cbp](pm::auth::Principal principal) {
+            std::string dbErr;
+            auto db = getDbOrNull(dbErr);
+            if (!db) {
+                return (*cbp)(pm::jsonError(
+                    {drogon::k500InternalServerError, "db client not available: " + dbErr}));
             }
-            auto resp = HttpResponse::newHttpJsonResponse(walletToJson(*w));
-            resp->setStatusCode(drogon::k200OK);
-            (*cbp)(resp);
+
+            WalletService svc{WalletRepository{db}};
+            svc.getWallet(
+                principal.user_id,
+                [cbp](std::optional<WalletRow> w) {
+                    if (!w) {
+                        return (*cbp)(pm::jsonError(
+                            {drogon::k404NotFound, "wallet not found"}));
+                    }
+                    auto resp = HttpResponse::newHttpJsonResponse(walletToJson(*w));
+                    resp->setStatusCode(drogon::k200OK);
+                    (*cbp)(resp);
+                },
+                [cbp](const drogon::orm::DrogonDbException &e) {
+                    (*cbp)(pm::jsonError(
+                        {drogon::k503ServiceUnavailable, e.base().what()}));
+                });
         },
+        [cbp](const pm::ApiError &e) { (*cbp)(pm::jsonError(e)); },
         [cbp](const drogon::orm::DrogonDbException &e) {
             (*cbp)(pm::jsonError({drogon::k503ServiceUnavailable, e.base().what()}));
         });
 }
 
 void WalletController::getWallet(
-    const drogon::HttpRequestPtr &,
+    const drogon::HttpRequestPtr &req,
     std::function<void(const drogon::HttpResponsePtr &)> &&cb,
     std::string userId) const {
-    auto cbp =
-        std::make_shared<std::function<void(const drogon::HttpResponsePtr &)>>(std::move(cb));
+    auto cbp = std::make_shared<ResponseCallback>(std::move(cb));
 
-    std::string dbErr;
-    auto db = getDbOrNull(dbErr);
-    if (!db) {
-        return (*cbp)(pm::jsonError(
-            {drogon::k500InternalServerError, "db client not available: " + dbErr}));
-    }
-
-    WalletService svc{WalletRepository{db}};
-    svc.getWallet(
-        userId,
-        [cbp](std::optional<WalletRow> w) {
-            if (!w) {
-                return (*cbp)(pm::jsonError({drogon::k404NotFound, "wallet not found"}));
+    pm::auth::requireAdminUser(
+        req,
+        [cbp, userId = std::move(userId)](pm::auth::Principal) {
+            std::string dbErr;
+            auto db = getDbOrNull(dbErr);
+            if (!db) {
+                return (*cbp)(pm::jsonError(
+                    {drogon::k500InternalServerError, "db client not available: " + dbErr}));
             }
-            auto resp = HttpResponse::newHttpJsonResponse(walletToJson(*w));
-            resp->setStatusCode(drogon::k200OK);
-            (*cbp)(resp);
+
+            WalletService svc{WalletRepository{db}};
+            svc.getWallet(
+                userId,
+                [cbp](std::optional<WalletRow> w) {
+                    if (!w) {
+                        return (*cbp)(pm::jsonError(
+                            {drogon::k404NotFound, "wallet not found"}));
+                    }
+                    auto resp = HttpResponse::newHttpJsonResponse(walletToJson(*w));
+                    resp->setStatusCode(drogon::k200OK);
+                    (*cbp)(resp);
+                },
+                [cbp](const drogon::orm::DrogonDbException &e) {
+                    (*cbp)(pm::jsonError(
+                        {drogon::k503ServiceUnavailable, e.base().what()}));
+                });
         },
+        [cbp](const pm::ApiError &e) { (*cbp)(pm::jsonError(e)); },
         [cbp](const drogon::orm::DrogonDbException &e) {
             (*cbp)(pm::jsonError({drogon::k503ServiceUnavailable, e.base().what()}));
         });
@@ -130,39 +126,45 @@ void WalletController::getWallet(
 void WalletController::adminDeposit(
     const drogon::HttpRequestPtr &req,
     std::function<void(const drogon::HttpResponsePtr &)> &&cb) const {
-    auto cbp =
-        std::make_shared<std::function<void(const drogon::HttpResponsePtr &)>>(std::move(cb));
+    auto cbp = std::make_shared<ResponseCallback>(std::move(cb));
 
-    if (!isAdmin(req)) {
-        return (*cbp)(pm::jsonError(adminAuthError()));
-    }
+    pm::auth::requireAdminUser(
+        req,
+        [cbp, req](pm::auth::Principal) {
+            const auto json = req->getJsonObject();
+            if (!json) {
+                return (*cbp)(pm::jsonError(
+                    {drogon::k400BadRequest, "expected JSON body"}));
+            }
 
-    const auto json = req->getJsonObject();
-    if (!json) {
-        return (*cbp)(pm::jsonError({drogon::k400BadRequest, "expected JSON body"}));
-    }
+            const auto userId = (*json).get("user_id", "").asString();
+            const auto amount = (*json).get("amount", 0).asInt64();
+            if (userId.empty()) {
+                return (*cbp)(pm::jsonError(
+                    {drogon::k400BadRequest, "user_id is required"}));
+            }
 
-    const auto userId = (*json).get("user_id", "").asString();
-    const auto amount = (*json).get("amount", 0).asInt64();
-    if (userId.empty()) {
-        return (*cbp)(pm::jsonError({drogon::k400BadRequest, "user_id is required"}));
-    }
+            std::string dbErr;
+            auto db = getDbOrNull(dbErr);
+            if (!db) {
+                return (*cbp)(pm::jsonError(
+                    {drogon::k500InternalServerError, "db client not available: " + dbErr}));
+            }
 
-    std::string dbErr;
-    auto db = getDbOrNull(dbErr);
-    if (!db) {
-        return (*cbp)(pm::jsonError(
-            {drogon::k500InternalServerError, "db client not available: " + dbErr}));
-    }
-
-    WalletService svc{WalletRepository{db}};
-    svc.deposit(
-        userId,
-        amount,
-        [cbp](WalletRow w) {
-            auto resp = HttpResponse::newHttpJsonResponse(walletToJson(w));
-            resp->setStatusCode(drogon::k200OK);
-            (*cbp)(resp);
+            WalletService svc{WalletRepository{db}};
+            svc.deposit(
+                userId,
+                amount,
+                [cbp](WalletRow w) {
+                    auto resp = HttpResponse::newHttpJsonResponse(walletToJson(w));
+                    resp->setStatusCode(drogon::k200OK);
+                    (*cbp)(resp);
+                },
+                [cbp](const pm::ApiError &e) { (*cbp)(pm::jsonError(e)); },
+                [cbp](const drogon::orm::DrogonDbException &e) {
+                    (*cbp)(pm::jsonError(
+                        {drogon::k503ServiceUnavailable, e.base().what()}));
+                });
         },
         [cbp](const pm::ApiError &e) { (*cbp)(pm::jsonError(e)); },
         [cbp](const drogon::orm::DrogonDbException &e) {

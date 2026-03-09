@@ -3,6 +3,7 @@
 #include "pm/repositories/PortfolioRepository.h"
 #include "pm/services/PortfolioService.h"
 #include "pm/util/ApiError.h"
+#include "pm/util/AuthGuard.h"
 
 #include <charconv>
 #include <memory>
@@ -22,14 +23,6 @@ drogon::orm::DbClientPtr getDbOrNull(std::string &err) {
         err = e.what();
         return nullptr;
     }
-}
-
-pm::ApiError requireUserId(const drogon::HttpRequestPtr &req, std::string &outUserId) {
-    outUserId = req->getHeader("X-User-Id");
-    if (outUserId.empty()) {
-        return {drogon::k401Unauthorized, "X-User-Id header is required (temporary auth)"};
-    }
-    return {drogon::k200OK, ""};
 }
 
 bool parseInt(std::string_view s, int &out) {
@@ -86,11 +79,6 @@ void PortfolioController::listPortfolio(
     auto cbp =
         std::make_shared<std::function<void(const drogon::HttpResponsePtr &)>>(std::move(cb));
 
-    std::string userId;
-    if (auto e = requireUserId(req, userId); !e) {
-        return (*cbp)(pm::jsonError(e));
-    }
-
     int limit = 50;
     int offset = 0;
     {
@@ -103,27 +91,35 @@ void PortfolioController::listPortfolio(
         }
     }
 
-    std::string dbErr;
-    auto db = getDbOrNull(dbErr);
-    if (!db) {
-        return (*cbp)(pm::jsonError(
-            {drogon::k500InternalServerError, "db client not available: " + dbErr}));
-    }
-
-    PortfolioService svc{PortfolioRepository{db}};
-    svc.listPositions(
-        userId,
-        limit,
-        offset,
-        [cbp](std::vector<PortfolioPositionRow> rows) {
-            Json::Value arr(Json::arrayValue);
-            for (const auto &row : rows) {
-                arr.append(positionToJson(row));
+    pm::auth::requireAuthenticatedUser(
+        req,
+        [cbp, limit, offset](pm::auth::Principal principal) {
+            std::string dbErr;
+            auto db = getDbOrNull(dbErr);
+            if (!db) {
+                return (*cbp)(pm::jsonError(
+                    {drogon::k500InternalServerError, "db client not available: " + dbErr}));
             }
-            auto resp = HttpResponse::newHttpJsonResponse(arr);
-            resp->setStatusCode(drogon::k200OK);
-            (*cbp)(resp);
+
+            PortfolioService svc{PortfolioRepository{db}};
+            svc.listPositions(
+                principal.user_id,
+                limit,
+                offset,
+                [cbp](std::vector<PortfolioPositionRow> rows) {
+                    Json::Value arr(Json::arrayValue);
+                    for (const auto &row : rows) {
+                        arr.append(positionToJson(row));
+                    }
+                    auto resp = HttpResponse::newHttpJsonResponse(arr);
+                    resp->setStatusCode(drogon::k200OK);
+                    (*cbp)(resp);
+                },
+                [cbp](const drogon::orm::DrogonDbException &e) {
+                    (*cbp)(pm::jsonError({drogon::k503ServiceUnavailable, e.base().what()}));
+                });
         },
+        [cbp](const pm::ApiError &e) { (*cbp)(pm::jsonError(e)); },
         [cbp](const drogon::orm::DrogonDbException &e) {
             (*cbp)(pm::jsonError({drogon::k503ServiceUnavailable, e.base().what()}));
         });
@@ -135,11 +131,6 @@ void PortfolioController::listLedger(
     auto cbp =
         std::make_shared<std::function<void(const drogon::HttpResponsePtr &)>>(std::move(cb));
 
-    std::string userId;
-    if (auto e = requireUserId(req, userId); !e) {
-        return (*cbp)(pm::jsonError(e));
-    }
-
     int limit = 50;
     int offset = 0;
     {
@@ -152,27 +143,35 @@ void PortfolioController::listLedger(
         }
     }
 
-    std::string dbErr;
-    auto db = getDbOrNull(dbErr);
-    if (!db) {
-        return (*cbp)(pm::jsonError(
-            {drogon::k500InternalServerError, "db client not available: " + dbErr}));
-    }
-
-    PortfolioService svc{PortfolioRepository{db}};
-    svc.listLedger(
-        userId,
-        limit,
-        offset,
-        [cbp](std::vector<PortfolioLedgerEntryRow> rows) {
-            Json::Value arr(Json::arrayValue);
-            for (const auto &row : rows) {
-                arr.append(ledgerToJson(row));
+    pm::auth::requireAuthenticatedUser(
+        req,
+        [cbp, limit, offset](pm::auth::Principal principal) {
+            std::string dbErr;
+            auto db = getDbOrNull(dbErr);
+            if (!db) {
+                return (*cbp)(pm::jsonError(
+                    {drogon::k500InternalServerError, "db client not available: " + dbErr}));
             }
-            auto resp = HttpResponse::newHttpJsonResponse(arr);
-            resp->setStatusCode(drogon::k200OK);
-            (*cbp)(resp);
+
+            PortfolioService svc{PortfolioRepository{db}};
+            svc.listLedger(
+                principal.user_id,
+                limit,
+                offset,
+                [cbp](std::vector<PortfolioLedgerEntryRow> rows) {
+                    Json::Value arr(Json::arrayValue);
+                    for (const auto &row : rows) {
+                        arr.append(ledgerToJson(row));
+                    }
+                    auto resp = HttpResponse::newHttpJsonResponse(arr);
+                    resp->setStatusCode(drogon::k200OK);
+                    (*cbp)(resp);
+                },
+                [cbp](const drogon::orm::DrogonDbException &e) {
+                    (*cbp)(pm::jsonError({drogon::k503ServiceUnavailable, e.base().what()}));
+                });
         },
+        [cbp](const pm::ApiError &e) { (*cbp)(pm::jsonError(e)); },
         [cbp](const drogon::orm::DrogonDbException &e) {
             (*cbp)(pm::jsonError({drogon::k503ServiceUnavailable, e.base().what()}));
         });

@@ -2,11 +2,12 @@
 
 #include "pm/repositories/MarketRepository.h"
 #include "pm/services/MarketService.h"
+#include "pm/util/ApiError.h"
+#include "pm/util/AuthGuard.h"
 #include "pm/util/Expected.h"
 
 #include <charconv>
 #include <cctype>
-#include <cstdlib>
 #include <memory>
 #include <optional>
 #include <string>
@@ -18,21 +19,11 @@ using drogon::HttpResponse;
 using drogon::HttpResponsePtr;
 
 namespace {
-struct ApiError {
-    drogon::HttpStatusCode code{};
-    std::string message;
-};
+using ApiError = pm::ApiError;
+using ResponseCallback = std::function<void(const drogon::HttpResponsePtr &)>;
 
 template <typename T>
 using Expected = pm::expected<T, ApiError>;
-
-[[nodiscard]] HttpResponsePtr jsonError(const ApiError &e) {
-    Json::Value j;
-    j["error"] = e.message;
-    auto resp = HttpResponse::newHttpJsonResponse(j);
-    resp->setStatusCode(e.code);
-    return resp;
-}
 
 [[nodiscard]] Json::Value marketToJson(const MarketRow &m) {
     Json::Value j;
@@ -55,11 +46,15 @@ using Expected = pm::expected<T, ApiError>;
 
     auto [ptr, ec] = std::from_chars(begin, end, v);
     if (ec != std::errc{} || ptr != end) {
-        return pm::unexpected(ApiError{drogon::k400BadRequest, std::string("invalid ") + std::string(fieldName)});
+        return pm::unexpected(ApiError{drogon::k400BadRequest,
+                                       std::string("invalid ") + std::string(fieldName)});
     }
 
     if (v < minV || v > maxV) {
-        return pm::unexpected(ApiError{drogon::k400BadRequest, std::string(fieldName) + " must be " + std::to_string(minV) + ".." + std::to_string(maxV)});
+        return pm::unexpected(ApiError{drogon::k400BadRequest,
+                                       std::string(fieldName) + " must be " +
+                                           std::to_string(minV) + ".." +
+                                           std::to_string(maxV)});
     }
 
     return v;
@@ -93,7 +88,12 @@ struct Paging {
     return Paging{limit, offset};
 }
 
-constexpr std::string_view kAllowedStatuses[] = {"OPEN", "CLOSED", "RESOLVED", "ARCHIVED"};
+constexpr std::string_view kAllowedStatuses[] = {
+    "OPEN",
+    "CLOSED",
+    "RESOLVED",
+    "ARCHIVED",
+};
 
 [[nodiscard]] bool isAllowedStatus(std::string_view s) {
     for (auto a : kAllowedStatuses) {
@@ -111,7 +111,8 @@ constexpr std::string_view kAllowedStatuses[] = {"OPEN", "CLOSED", "RESOLVED", "
     }
 
     if (!isAllowedStatus(st)) {
-        return pm::unexpected(ApiError{drogon::k400BadRequest, "status must be OPEN|CLOSED|RESOLVED|ARHICVED"});
+        return pm::unexpected(ApiError{drogon::k400BadRequest,
+                                       "status must be OPEN|CLOSED|RESOLVED|ARCHIVED"});
     }
 
     return std::optional<std::string>{st};
@@ -121,22 +122,10 @@ constexpr std::string_view kAllowedStatuses[] = {"OPEN", "CLOSED", "RESOLVED", "
     try {
         return drogon::app().getDbClient("default");
     } catch (const std::exception &e) {
-        return pm::unexpected(ApiError{drogon::k500InternalServerError, std::string("db client not available: ") + e.what()});
+        return pm::unexpected(ApiError{
+            drogon::k500InternalServerError,
+            std::string("db client not available: ") + e.what()});
     }
-}
-
-[[nodiscard]] Expected<void> requireAdmin(const drogon::HttpRequestPtr &req) {
-    const char *expected = std::getenv("PM_ADMIN_TOKEN");
-    if (!expected || std::string_view(expected).empty()) {
-        return pm::unexpected(ApiError{drogon::k401Unauthorized, "admin token is not configured"});
-    }
-
-    const auto token = req->getHeader("X-Admin-Token");
-    if (token.empty() || token != expected) {
-        return pm::unexpected(ApiError{drogon::k401Unauthorized, "admin token missing or invalid"});
-    }
-
-    return Expected<void>{};
 }
 
 [[nodiscard]] Expected<std::string> parseQuestion(const drogon::HttpRequestPtr &req) {
@@ -151,7 +140,8 @@ constexpr std::string_view kAllowedStatuses[] = {"OPEN", "CLOSED", "RESOLVED", "
     }
 
     if (q.size() < 3 || q.size() > 300) {
-        return pm::unexpected(ApiError{drogon::k400BadRequest, "question must be 3..300 chars"});
+        return pm::unexpected(ApiError{drogon::k400BadRequest,
+                                       "question must be 3..300 chars"});
     }
 
     return q;
@@ -199,7 +189,8 @@ constexpr std::string_view kAllowedStatuses[] = {"OPEN", "CLOSED", "RESOLVED", "
     }
 
     if (!arr->isArray()) {
-        return pm::unexpected(ApiError{drogon::k400BadRequest, "outcomes must be an array of strings"});
+        return pm::unexpected(ApiError{drogon::k400BadRequest,
+                                       "outcomes must be an array of strings"});
     }
 
     std::vector<std::string> titles;
@@ -207,22 +198,26 @@ constexpr std::string_view kAllowedStatuses[] = {"OPEN", "CLOSED", "RESOLVED", "
 
     for (const auto &item : *arr) {
         if (!item.isString()) {
-            return pm::unexpected(ApiError{drogon::k400BadRequest, "outcomes must contain only strings"});
+            return pm::unexpected(ApiError{drogon::k400BadRequest,
+                                           "outcomes must contain only strings"});
         }
 
         auto title = trimCopy(item.asString());
         if (title.size() < 1 || title.size() > 80) {
-            return pm::unexpected(ApiError{drogon::k400BadRequest, "each outcome title must be 1..80 chars"});
+            return pm::unexpected(ApiError{drogon::k400BadRequest,
+                                           "each outcome title must be 1..80 chars"});
         }
         if (containsDuplicateTitle(titles, title)) {
-            return pm::unexpected(ApiError{drogon::k400BadRequest, "outcome titles must be unique"});
+            return pm::unexpected(ApiError{drogon::k400BadRequest,
+                                           "outcome titles must be unique"});
         }
 
         titles.push_back(std::move(title));
     }
 
     if (titles.size() < 2 || titles.size() > 10) {
-        return pm::unexpected(ApiError{drogon::k400BadRequest, "outcomes count must be 2..10"});
+        return pm::unexpected(ApiError{drogon::k400BadRequest,
+                                       "outcomes count must be 2..10"});
     }
 
     return titles;
@@ -268,7 +263,8 @@ struct MarketPatchRequest {
         }
 
         if (q.size() < 3 || q.size() > 300) {
-            return pm::unexpected(ApiError{drogon::k400BadRequest, "question must be 3..300 chars"});
+            return pm::unexpected(ApiError{drogon::k400BadRequest,
+                                           "question must be 3..300 chars"});
         }
         patch.question = std::move(q);
     }
@@ -276,41 +272,45 @@ struct MarketPatchRequest {
     if (json->isMember("status")) {
         auto st = (*json).get("status", "").asString();
         if (st != "OPEN" && st != "CLOSED") {
-            return pm::unexpected(ApiError{drogon::k400BadRequest, "status must be OPEN|CLOSED (use /resolve for RESOLVED)"});
+            return pm::unexpected(ApiError{
+                drogon::k400BadRequest,
+                "status must be OPEN|CLOSED (use /resolve for RESOLVED, /archive for ARCHIVED)"});
         }
         patch.status = std::move(st);
     }
 
     if (!patch.question && !patch.status) {
-        return pm::unexpected(ApiError{drogon::k400BadRequest, "at least one of question or status is required"});
+        return pm::unexpected(ApiError{drogon::k400BadRequest,
+                                       "at least one of question or status is required"});
     }
 
     return patch;
 }
+
 }  // namespace
 
-bool MarketController::isAdmin(const drogon::HttpRequestPtr &req) {
-    return static_cast<bool>(requireAdmin(req));
+bool MarketController::isAdmin(const drogon::HttpRequestPtr &) {
+    return false;
 }
 
 void MarketController::listMarkets(
     const drogon::HttpRequestPtr &req,
     std::function<void(const drogon::HttpResponsePtr &)> &&cb) const {
-    auto cbp = std::make_shared<std::function<void(const drogon::HttpResponsePtr &)>>(std::move(cb));
+    auto cbp = std::make_shared<ResponseCallback>(std::move(cb));
 
     auto paging = parsePaging(req);
     if (!paging) {
-        return (*cbp)(jsonError(paging.error()));
+        return (*cbp)(pm::jsonError(paging.error()));
     }
 
     auto status = parseStatus(req);
     if (!status) {
-        return (*cbp)(jsonError(status.error()));
+        return (*cbp)(pm::jsonError(status.error()));
     }
 
     auto db = getDb();
     if (!db) {
-        return (*cbp)(jsonError(db.error()));
+        return (*cbp)(pm::jsonError(db.error()));
     }
 
     const auto [limit, offset] = paging.value();
@@ -329,7 +329,7 @@ void MarketController::listMarkets(
             (*cbp)(resp);
         },
         [cbp](const drogon::orm::DrogonDbException &e) {
-            (*cbp)(jsonError({drogon::k503ServiceUnavailable, e.base().what()}));
+            (*cbp)(pm::jsonError({drogon::k503ServiceUnavailable, e.base().what()}));
         });
 }
 
@@ -337,11 +337,11 @@ void MarketController::getMarket(
     const drogon::HttpRequestPtr &,
     std::function<void(const drogon::HttpResponsePtr &)> &&cb,
     std::string id) const {
-    auto cbp = std::make_shared<std::function<void(const drogon::HttpResponsePtr &)>>(std::move(cb));
+    auto cbp = std::make_shared<ResponseCallback>(std::move(cb));
 
     auto db = getDb();
     if (!db) {
-        return (*cbp)(jsonError(db.error()));
+        return (*cbp)(pm::jsonError(db.error()));
     }
 
     MarketService svc{MarketRepository{db.value()}};
@@ -349,7 +349,7 @@ void MarketController::getMarket(
         id,
         [cbp](std::optional<MarketRow> row) {
             if (!row) {
-                return (*cbp)(jsonError({drogon::k404NotFound, "market not found"}));
+                return (*cbp)(pm::jsonError({drogon::k404NotFound, "market not found"}));
             }
 
             auto resp = HttpResponse::newHttpJsonResponse(marketToJson(*row));
@@ -357,46 +357,51 @@ void MarketController::getMarket(
             (*cbp)(resp);
         },
         [cbp](const drogon::orm::DrogonDbException &e) {
-            (*cbp)(jsonError({drogon::k503ServiceUnavailable, e.base().what()}));
+            (*cbp)(pm::jsonError({drogon::k503ServiceUnavailable, e.base().what()}));
         });
 }
 
 void MarketController::createMarket(
     const drogon::HttpRequestPtr &req,
     std::function<void(const drogon::HttpResponsePtr &)> &&cb) const {
-    auto cbp = std::make_shared<std::function<void(const drogon::HttpResponsePtr &)>>(std::move(cb));
+    auto cbp = std::make_shared<ResponseCallback>(std::move(cb));
 
-    if (auto adm = requireAdmin(req); !adm) {
-        return (*cbp)(jsonError(adm.error()));
-    }
+    pm::auth::requireAdminUser(
+        req,
+        [cbp, req](pm::auth::Principal) {
+            auto question = parseQuestion(req);
+            if (!question) {
+                return (*cbp)(pm::jsonError(question.error()));
+            }
 
-    auto question = parseQuestion(req);
-    if (!question) {
-        return (*cbp)(jsonError(question.error()));
-    }
+            auto outcomeTitles = parseOutcomeTitles(req);
+            if (!outcomeTitles) {
+                return (*cbp)(pm::jsonError(outcomeTitles.error()));
+            }
 
-    auto outcomeTitles = parseOutcomeTitles(req);
-    if (!outcomeTitles) {
-        return (*cbp)(jsonError(outcomeTitles.error()));
-    }
+            auto db = getDb();
+            if (!db) {
+                return (*cbp)(pm::jsonError(db.error()));
+            }
 
-    auto db = getDb();
-    if (!db) {
-        return (*cbp)(jsonError(db.error()));
-    }
-
-    MarketService svc{MarketRepository{db.value()}};
-    svc.createMarketWithOutcomes(
-        question.value(),
-        outcomeTitles.value(),
-        [cbp](MarketRow created, std::vector<OutcomeRow> outcomes) {
-            auto resp = HttpResponse::newHttpJsonResponse(
-                marketWithOutcomesToJson(created, outcomes));
-            resp->setStatusCode(drogon::k201Created);
-            (*cbp)(resp);
+            MarketService svc{MarketRepository{db.value()}};
+            svc.createMarketWithOutcomes(
+                question.value(),
+                outcomeTitles.value(),
+                [cbp](MarketRow created, std::vector<OutcomeRow> outcomes) {
+                    auto resp = HttpResponse::newHttpJsonResponse(
+                        marketWithOutcomesToJson(created, outcomes));
+                    resp->setStatusCode(drogon::k201Created);
+                    (*cbp)(resp);
+                },
+                [cbp](const drogon::orm::DrogonDbException &e) {
+                    (*cbp)(pm::jsonError(
+                        {drogon::k503ServiceUnavailable, e.base().what()}));
+                });
         },
+        [cbp](const pm::ApiError &e) { (*cbp)(pm::jsonError(e)); },
         [cbp](const drogon::orm::DrogonDbException &e) {
-            (*cbp)(jsonError({drogon::k503ServiceUnavailable, e.base().what()}));
+            (*cbp)(pm::jsonError({drogon::k503ServiceUnavailable, e.base().what()}));
         });
 }
 
@@ -404,54 +409,68 @@ void MarketController::updateMarket(
     const drogon::HttpRequestPtr &req,
     std::function<void(const drogon::HttpResponsePtr &)> &&cb,
     std::string id) const {
-    auto cbp = std::make_shared<std::function<void(const drogon::HttpResponsePtr &)>>(std::move(cb));
+    auto cbp = std::make_shared<ResponseCallback>(std::move(cb));
 
-    if (auto adm = requireAdmin(req); !adm) {
-        return (*cbp)(jsonError(adm.error()));
-    }
-
-    auto patch = parseMarketPatch(req);
-    if (!patch) {
-        return (*cbp)(jsonError(patch.error()));
-    }
-
-    auto db = getDb();
-    if (!db) {
-        return (*cbp)(jsonError(db.error()));
-    }
-
-    auto svc = std::make_shared<MarketService>(MarketRepository{db.value()});
-    svc->getMarketById(
-        id,
-        [cbp, svc, patch = patch.value()](std::optional<MarketRow> row) mutable {
-            if (!row) {
-                return (*cbp)(jsonError({drogon::k404NotFound, "market not found"}));
+    pm::auth::requireAdminUser(
+        req,
+        [cbp, req, id = std::move(id)](pm::auth::Principal) mutable {
+            auto patch = parseMarketPatch(req);
+            if (!patch) {
+                return (*cbp)(pm::jsonError(patch.error()));
             }
 
-            if (row->status == "RESOLVED") {
-                return (*cbp)(
-                    jsonError({drogon::k409Conflict, "resolved market cannot be updated"}));
+            auto db = getDb();
+            if (!db) {
+                return (*cbp)(pm::jsonError(db.error()));
             }
 
-            svc->updateMarket(
-                row->id,
-                std::move(patch.question),
-                std::move(patch.status),
-                [cbp](std::optional<MarketRow> updated) mutable {
-                    if (!updated) {
-                        return (*cbp)(jsonError({drogon::k404NotFound, "market not found"}));
+            auto svc = std::make_shared<MarketService>(MarketRepository{db.value()});
+            svc->getMarketById(
+                id,
+                [cbp, svc, patch = patch.value()](std::optional<MarketRow> row) mutable {
+                    if (!row) {
+                        return (*cbp)(pm::jsonError(
+                            {drogon::k404NotFound, "market not found"}));
                     }
 
-                    auto resp = HttpResponse::newHttpJsonResponse(marketToJson(*updated));
-                    resp->setStatusCode(drogon::k200OK);
-                    (*cbp)(resp);
+                    if (row->status == "RESOLVED") {
+                        return (*cbp)(pm::jsonError(
+                            {drogon::k409Conflict, "resolved market cannot be updated"}));
+                    }
+
+                    if (row->status == "ARCHIVED") {
+                        return (*cbp)(pm::jsonError(
+                            {drogon::k409Conflict, "archived market cannot be updated"}));
+                    }
+
+                    svc->updateMarket(
+                        row->id,
+                        std::move(patch.question),
+                        std::move(patch.status),
+                        [cbp](std::optional<MarketRow> updated) mutable {
+                            if (!updated) {
+                                return (*cbp)(pm::jsonError(
+                                    {drogon::k404NotFound, "market not found"}));
+                            }
+
+                            auto resp =
+                                HttpResponse::newHttpJsonResponse(marketToJson(*updated));
+                            resp->setStatusCode(drogon::k200OK);
+                            (*cbp)(resp);
+                        },
+                        [cbp](const drogon::orm::DrogonDbException &e) mutable {
+                            (*cbp)(pm::jsonError(
+                                {drogon::k503ServiceUnavailable, e.base().what()}));
+                        });
                 },
                 [cbp](const drogon::orm::DrogonDbException &e) mutable {
-                    (*cbp)(jsonError({drogon::k503ServiceUnavailable, e.base().what()}));
+                    (*cbp)(pm::jsonError(
+                        {drogon::k503ServiceUnavailable, e.base().what()}));
                 });
         },
-        [cbp](const drogon::orm::DrogonDbException &e) mutable {
-            (*cbp)(jsonError({drogon::k503ServiceUnavailable, e.base().what()}));
+        [cbp](const pm::ApiError &e) { (*cbp)(pm::jsonError(e)); },
+        [cbp](const drogon::orm::DrogonDbException &e) {
+            (*cbp)(pm::jsonError({drogon::k503ServiceUnavailable, e.base().what()}));
         });
 }
 
@@ -459,55 +478,69 @@ void MarketController::closeMarket(
     const drogon::HttpRequestPtr &req,
     std::function<void(const drogon::HttpResponsePtr &)> &&cb,
     std::string id) const {
-    auto cbp = std::make_shared<std::function<void(const drogon::HttpResponsePtr &)>>(std::move(cb));
+    auto cbp = std::make_shared<ResponseCallback>(std::move(cb));
 
-    if (auto adm = requireAdmin(req); !adm) {
-        return (*cbp)(jsonError(adm.error()));
-    }
-
-    auto db = getDb();
-    if (!db) {
-        return (*cbp)(jsonError(db.error()));
-    }
-
-    auto svc = std::make_shared<MarketService>(MarketRepository{db.value()});
-    svc->getMarketById(
-        id,
-        [cbp, svc](std::optional<MarketRow> row) mutable {
-            if (!row) {
-                return (*cbp)(jsonError({drogon::k404NotFound, "market not found"}));
+    pm::auth::requireAdminUser(
+        req,
+        [cbp, id = std::move(id)](pm::auth::Principal) mutable {
+            auto db = getDb();
+            if (!db) {
+                return (*cbp)(pm::jsonError(db.error()));
             }
 
-            if (row->status == "RESOLVED") {
-                return (*cbp)(
-                    jsonError({drogon::k409Conflict, "resolved market cannot be closed"}));
-            }
-
-            if (row->status == "CLOSED") {
-                auto resp = HttpResponse::newHttpJsonResponse(marketToJson(*row));
-                resp->setStatusCode(drogon::k200OK);
-                return (*cbp)(resp);
-            }
-
-            svc->updateMarket(
-                row->id,
-                std::nullopt,
-                std::optional<std::string>{"CLOSED"},
-                [cbp](std::optional<MarketRow> updated) mutable {
-                    if (!updated) {
-                        return (*cbp)(jsonError({drogon::k404NotFound, "market not found"}));
+            auto svc = std::make_shared<MarketService>(MarketRepository{db.value()});
+            svc->getMarketById(
+                id,
+                [cbp, svc](std::optional<MarketRow> row) mutable {
+                    if (!row) {
+                        return (*cbp)(pm::jsonError(
+                            {drogon::k404NotFound, "market not found"}));
                     }
 
-                    auto resp = HttpResponse::newHttpJsonResponse(marketToJson(*updated));
-                    resp->setStatusCode(drogon::k200OK);
-                    (*cbp)(resp);
+                    if (row->status == "RESOLVED") {
+                        return (*cbp)(pm::jsonError(
+                            {drogon::k409Conflict, "resolved market cannot be closed"}));
+                    }
+
+                    if (row->status == "ARCHIVED") {
+                        return (*cbp)(pm::jsonError(
+                            {drogon::k409Conflict, "archived market cannot be closed"}));
+                    }
+
+                    if (row->status == "CLOSED") {
+                        auto resp = HttpResponse::newHttpJsonResponse(marketToJson(*row));
+                        resp->setStatusCode(drogon::k200OK);
+                        return (*cbp)(resp);
+                    }
+
+                    svc->updateMarket(
+                        row->id,
+                        std::nullopt,
+                        std::optional<std::string>{"CLOSED"},
+                        [cbp](std::optional<MarketRow> updated) mutable {
+                            if (!updated) {
+                                return (*cbp)(pm::jsonError(
+                                    {drogon::k404NotFound, "market not found"}));
+                            }
+
+                            auto resp =
+                                HttpResponse::newHttpJsonResponse(marketToJson(*updated));
+                            resp->setStatusCode(drogon::k200OK);
+                            (*cbp)(resp);
+                        },
+                        [cbp](const drogon::orm::DrogonDbException &e) mutable {
+                            (*cbp)(pm::jsonError(
+                                {drogon::k503ServiceUnavailable, e.base().what()}));
+                        });
                 },
                 [cbp](const drogon::orm::DrogonDbException &e) mutable {
-                    (*cbp)(jsonError({drogon::k503ServiceUnavailable, e.base().what()}));
+                    (*cbp)(pm::jsonError(
+                        {drogon::k503ServiceUnavailable, e.base().what()}));
                 });
         },
-        [cbp](const drogon::orm::DrogonDbException &e) mutable {
-            (*cbp)(jsonError({drogon::k503ServiceUnavailable, e.base().what()}));
+        [cbp](const pm::ApiError &e) { (*cbp)(pm::jsonError(e)); },
+        [cbp](const drogon::orm::DrogonDbException &e) {
+            (*cbp)(pm::jsonError({drogon::k503ServiceUnavailable, e.base().what()}));
         });
 }
 
@@ -515,11 +548,11 @@ void MarketController::listOutcomes(
     const drogon::HttpRequestPtr &,
     std::function<void(const drogon::HttpResponsePtr &)> &&cb,
     std::string id) const {
-    auto cbp = std::make_shared<std::function<void(const drogon::HttpResponsePtr &)>>(std::move(cb));
+    auto cbp = std::make_shared<ResponseCallback>(std::move(cb));
 
     auto db = getDb();
     if (!db) {
-        return (*cbp)(jsonError(db.error()));
+        return (*cbp)(pm::jsonError(db.error()));
     }
 
     MarketService svc{MarketRepository{db.value()}};
@@ -536,7 +569,7 @@ void MarketController::listOutcomes(
             (*cbp)(resp);
         },
         [cbp](const drogon::orm::DrogonDbException &e) mutable {
-            (*cbp)(jsonError({drogon::k503ServiceUnavailable, e.base().what()}));
+            (*cbp)(pm::jsonError({drogon::k503ServiceUnavailable, e.base().what()}));
         });
 }
 
@@ -544,85 +577,91 @@ void MarketController::resolveMarket(
     const drogon::HttpRequestPtr &req,
     std::function<void(const drogon::HttpResponsePtr &)> &&cb,
     std::string id) const {
-    auto cbp =
-        std::make_shared<std::function<void(const drogon::HttpResponsePtr &)>>(std::move(cb));
+    auto cbp = std::make_shared<ResponseCallback>(std::move(cb));
 
-    if (auto adm = requireAdmin(req); !adm) {
-        return (*cbp)(jsonError(adm.error()));
-    }
-
-    const auto json = req->getJsonObject();
-    if (!json) {
-        return (*cbp)(jsonError({drogon::k400BadRequest, "expected JSON body"}));
-    }
-
-    std::string winningOutcomeId = (*json).get("winning_outcome_id", "").asString();
-    if (winningOutcomeId.empty()) {
-        winningOutcomeId = (*json).get("outcome_id", "").asString();
-    }
-    if (winningOutcomeId.empty()) {
-        return (*cbp)(
-            jsonError({drogon::k400BadRequest, "winning_outcome_id is required"}));
-    }
-
-    const char *adminUserIdEnv = std::getenv("PM_ADMIN_USER_ID");
-    if (!adminUserIdEnv || std::string_view(adminUserIdEnv).empty()) {
-        return (*cbp)(jsonError(
-            {drogon::k500InternalServerError, "PM_ADMIN_USER_ID is not configured"}));
-    }
-    const std::string adminUserId = adminUserIdEnv;
-
-    auto db = getDb();
-    if (!db) {
-        return (*cbp)(jsonError(db.error()));
-    }
-
-    auto svc = std::make_shared<MarketService>(MarketRepository{db.value()});
-    svc->getMarketWithOutcomesById(
-        id,
-        [cbp, svc, winningOutcomeId, adminUserId](
-            std::optional<std::pair<MarketRow, std::vector<OutcomeRow>>> data) mutable {
-            if (!data) {
-                return (*cbp)(jsonError({drogon::k404NotFound, "market not found"}));
+    pm::auth::requireAdminUser(
+        req,
+        [cbp, req, id = std::move(id)](pm::auth::Principal admin) mutable {
+            const auto json = req->getJsonObject();
+            if (!json) {
+                return (*cbp)(pm::jsonError(
+                    {drogon::k400BadRequest, "expected JSON body"}));
             }
 
-            auto &[market, outcomes] = *data;
-
-            if (market.status == "RESOLVED") {
-                return (*cbp)(
-                    jsonError({drogon::k409Conflict, "market already resolved"}));
+            std::string winningOutcomeId = (*json).get("winning_outcome_id", "").asString();
+            if (winningOutcomeId.empty()) {
+                winningOutcomeId = (*json).get("outcome_id", "").asString();
+            }
+            if (winningOutcomeId.empty()) {
+                return (*cbp)(pm::jsonError(
+                    {drogon::k400BadRequest, "winning_outcome_id is required"}));
             }
 
-            bool belongsToMarket = false;
-            for (const auto &o : outcomes) {
-                if (o.id == winningOutcomeId) {
-                    belongsToMarket = true;
-                    break;
-                }
+            auto db = getDb();
+            if (!db) {
+                return (*cbp)(pm::jsonError(db.error()));
             }
 
-            if (!belongsToMarket) {
-                return (*cbp)(jsonError(
-                    {drogon::k400BadRequest, "winning_outcome_id does not belong to market"}));
-            }
+            const std::string adminUserId = admin.user_id;
+            auto svc = std::make_shared<MarketService>(MarketRepository{db.value()});
+            svc->getMarketWithOutcomesById(
+                id,
+                [cbp, svc, winningOutcomeId, adminUserId](
+                    std::optional<std::pair<MarketRow, std::vector<OutcomeRow>>> data) mutable {
+                    if (!data) {
+                        return (*cbp)(pm::jsonError(
+                            {drogon::k404NotFound, "market not found"}));
+                    }
 
-            svc->resolveMarket(
-                market.id,
-                winningOutcomeId,
-                adminUserId,
-                [cbp](MarketRow updated) mutable {
-                    auto resp =
-                        drogon::HttpResponse::newHttpJsonResponse(marketToJson(updated));
-                    resp->setStatusCode(drogon::k200OK);
-                    (*cbp)(resp);
+                    auto &[market, outcomes] = *data;
+
+                    if (market.status == "RESOLVED") {
+                        return (*cbp)(pm::jsonError(
+                            {drogon::k409Conflict, "market already resolved"}));
+                    }
+
+                    if (market.status == "ARCHIVED") {
+                        return (*cbp)(pm::jsonError(
+                            {drogon::k409Conflict, "archived market cannot be resolved"}));
+                    }
+
+                    bool belongsToMarket = false;
+                    for (const auto &o : outcomes) {
+                        if (o.id == winningOutcomeId) {
+                            belongsToMarket = true;
+                            break;
+                        }
+                    }
+
+                    if (!belongsToMarket) {
+                        return (*cbp)(pm::jsonError({
+                            drogon::k400BadRequest,
+                            "winning_outcome_id does not belong to market"}));
+                    }
+
+                    svc->resolveMarket(
+                        market.id,
+                        winningOutcomeId,
+                        adminUserId,
+                        [cbp](MarketRow updated) mutable {
+                            auto resp = drogon::HttpResponse::newHttpJsonResponse(
+                                marketToJson(updated));
+                            resp->setStatusCode(drogon::k200OK);
+                            (*cbp)(resp);
+                        },
+                        [cbp](const drogon::orm::DrogonDbException &e) mutable {
+                            (*cbp)(pm::jsonError(
+                                {drogon::k503ServiceUnavailable, e.base().what()}));
+                        });
                 },
                 [cbp](const drogon::orm::DrogonDbException &e) mutable {
-                    (*cbp)(
-                        jsonError({drogon::k503ServiceUnavailable, e.base().what()}));
+                    (*cbp)(pm::jsonError(
+                        {drogon::k503ServiceUnavailable, e.base().what()}));
                 });
         },
-        [cbp](const drogon::orm::DrogonDbException &e) mutable {
-            (*cbp)(jsonError({drogon::k503ServiceUnavailable, e.base().what()}));
+        [cbp](const pm::ApiError &e) { (*cbp)(pm::jsonError(e)); },
+        [cbp](const drogon::orm::DrogonDbException &e) {
+            (*cbp)(pm::jsonError({drogon::k503ServiceUnavailable, e.base().what()}));
         });
 }
 
@@ -630,38 +669,56 @@ void MarketController::archiveMarket(
     const drogon::HttpRequestPtr &req,
     std::function<void(const HttpResponsePtr &)> &&cb,
     std::string id) const {
-    auto cbp = std::make_shared<std::function<void(const drogon::HttpResponsePtr &)>>(std::move(cb));
+    auto cbp = std::make_shared<ResponseCallback>(std::move(cb));
 
-    if (auto adm = requireAdmin(req); !adm) {
-        return (*cbp)(jsonError(adm.error()));
-    }
-
-    auto db = getDb();
-    if (!db) {
-        return (*cbp)(jsonError(db.error()));
-    }
-
-    MarketService svc{MarketRepository{db.value()}};
-    svc.getMarketById(
-        id,
-        [cbp, svc](std::optional<MarketRow> row) mutable {
-            if (!row) {
-                return (*cbp)(jsonError(ApiError{drogon::k404NotFound, "market not found"}));
+    pm::auth::requireAdminUser(
+        req,
+        [cbp, id = std::move(id)](pm::auth::Principal) mutable {
+            auto db = getDb();
+            if (!db) {
+                return (*cbp)(pm::jsonError(db.error()));
             }
 
-            svc.archiveMarket(
-                row->id,
-                [cbp](MarketRow updated) mutable {
-                    auto resp = HttpResponse::newHttpJsonResponse(marketToJson(updated));
-                    resp->setStatusCode(drogon::k200OK);
-                    (*cbp)(resp);
+            auto svc = std::make_shared<MarketService>(MarketRepository{db.value()});
+            svc->getMarketById(
+                id,
+                [cbp, svc](std::optional<MarketRow> row) mutable {
+                    if (!row) {
+                        return (*cbp)(pm::jsonError(
+                            {drogon::k404NotFound, "market not found"}));
+                    }
+
+                    if (row->status == "RESOLVED") {
+                        return (*cbp)(pm::jsonError(
+                            {drogon::k409Conflict, "resolved market cannot be archived"}));
+                    }
+
+                    if (row->status == "ARCHIVED") {
+                        auto resp = HttpResponse::newHttpJsonResponse(marketToJson(*row));
+                        resp->setStatusCode(drogon::k200OK);
+                        return (*cbp)(resp);
+                    }
+
+                    svc->archiveMarket(
+                        row->id,
+                        [cbp](MarketRow updated) mutable {
+                            auto resp = HttpResponse::newHttpJsonResponse(marketToJson(updated));
+                            resp->setStatusCode(drogon::k200OK);
+                            (*cbp)(resp);
+                        },
+                        [cbp](const drogon::orm::DrogonDbException &e) mutable {
+                            (*cbp)(pm::jsonError(
+                                {drogon::k503ServiceUnavailable, e.base().what()}));
+                        });
                 },
                 [cbp](const drogon::orm::DrogonDbException &e) mutable {
-                    (*cbp)(jsonError(ApiError{drogon::k503ServiceUnavailable, e.base().what()}));
+                    (*cbp)(pm::jsonError(
+                        {drogon::k503ServiceUnavailable, e.base().what()}));
                 });
         },
-        [cbp](const drogon::orm::DrogonDbException &e) mutable {
-            (*cbp)(jsonError(ApiError{drogon::k503ServiceUnavailable, e.base().what()}));
+        [cbp](const pm::ApiError &e) { (*cbp)(pm::jsonError(e)); },
+        [cbp](const drogon::orm::DrogonDbException &e) {
+            (*cbp)(pm::jsonError({drogon::k503ServiceUnavailable, e.base().what()}));
         });
 }
 
