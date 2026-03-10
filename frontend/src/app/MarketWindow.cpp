@@ -5,6 +5,7 @@
 
 #include <QApplication>
 #include <QHBoxLayout>
+#include <QIcon>
 #include <QStackedWidget>
 #include <QVBoxLayout>
 #include <QWidget>
@@ -39,7 +40,15 @@ QString profileNameFromEnvironment() {
 } // namespace
 
 MarketWindow::MarketWindow(QWidget *parent) : QMainWindow(parent) {
-    setWindowTitle(QStringLiteral("Prediction Market"));
+    setWindowFlags(Qt::Window |
+                   Qt::CustomizeWindowHint |
+                   Qt::WindowMinimizeButtonHint |
+                   Qt::WindowMaximizeButtonHint |
+                   Qt::WindowCloseButtonHint);
+
+    setWindowTitle(QStringLiteral("PreDgict"));
+    setWindowFilePath(QString());
+    setWindowIcon(QIcon());
 
     auto *central = new QWidget(this);
     auto *root = new QVBoxLayout(central);
