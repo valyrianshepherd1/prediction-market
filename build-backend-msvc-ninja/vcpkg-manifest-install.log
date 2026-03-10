@@ -1,0 +1,80 @@
+Detecting compiler hash for triplet x64-windows...
+-- Automatically setting %HTTP(S)_PROXY% environment variables to "127.0.0.1:10801".
+Compiler found: C:/Program Files (x86)/Microsoft Visual Studio/2022/BuildTools/VC/Tools/MSVC/14.44.35207/bin/Hostx64/x64/cl.exe
+The following packages will be built and installed:
+  * brotli:x64-windows@1.2.0
+  * c-ares:x64-windows@1.34.6#1
+    drogon[core,orm,postgres]:x64-windows@1.9.12
+  * jsoncpp:x64-windows@1.9.6
+  * libpq[core,lz4,openssl,zlib]:x64-windows@16.9#3
+  * lz4:x64-windows@1.10.0
+  * openssl:x64-windows@3.6.1#2
+  * pkgconf:x64-windows@2.5.1#4
+  * trantor:x64-windows@1.5.26
+  * vcpkg-cmake:x64-windows@2024-04-23
+  * vcpkg-cmake-config:x64-windows@2024-05-23
+  * vcpkg-cmake-get-vars:x64-windows@2025-05-29
+  * vcpkg-pkgconfig-get-modules:x64-windows@2024-04-03
+  * vcpkg-tool-meson:x64-windows@1.9.0#3
+  * zlib:x64-windows@1.3.1
+Additional packages (*) will be modified to complete this operation.
+Restored 15 package(s) from C:\Users\aleks\AppData\Local\vcpkg\archives in 2 s. Use --debug to see more details.
+Installing 1/15 vcpkg-cmake:x64-windows@2024-04-23...
+Elapsed time to handle vcpkg-cmake:x64-windows: 7.15 ms
+vcpkg-cmake:x64-windows package ABI: a466b0bea0efbf229c95de95bcec206b6fa32dcb3912030d7d03e589b110cf35
+Installing 2/15 zlib:x64-windows@1.3.1...
+Elapsed time to handle zlib:x64-windows: 12.3 ms
+zlib:x64-windows package ABI: 6097bd07c11646e826cd6af2f536a3d9e9ade952477bf468deb1d82d0466c03f
+Installing 3/15 vcpkg-cmake-get-vars:x64-windows@2025-05-29...
+Elapsed time to handle vcpkg-cmake-get-vars:x64-windows: 8.14 ms
+vcpkg-cmake-get-vars:x64-windows package ABI: 270a5ac988f3b27bcdf391d6656474899f2958f3f4074ffb2343d3f5ec51cda4
+Installing 4/15 vcpkg-cmake-config:x64-windows@2024-05-23...
+Elapsed time to handle vcpkg-cmake-config:x64-windows: 6.23 ms
+vcpkg-cmake-config:x64-windows package ABI: 1db8f6e3b8cd2585ba9d5ce19ac3c1b759b85bcc71d94a4c2a012f9ebd840255
+Installing 5/15 openssl:x64-windows@3.6.1#2...
+Elapsed time to handle openssl:x64-windows: 60.5 ms
+openssl:x64-windows package ABI: 2d648c427aa1e45765246ca832bd15c48d43ed0312b3e4dee5f7dfa84d9110b2
+Installing 6/15 lz4:x64-windows@1.10.0...
+Elapsed time to handle lz4:x64-windows: 29.6 ms
+lz4:x64-windows package ABI: f7e90d4c134494784fa9374ef4c112124607e5a8e8e4896d678891e467779575
+Installing 7/15 vcpkg-tool-meson:x64-windows@1.9.0#3...
+Elapsed time to handle vcpkg-tool-meson:x64-windows: 15.1 ms
+vcpkg-tool-meson:x64-windows package ABI: ea3b1a101222e1d12a96798cd712fd65838ae173f4eb360dd4be51ca09a71862
+Installing 8/15 pkgconf:x64-windows@2.5.1#4...
+Elapsed time to handle pkgconf:x64-windows: 18.9 ms
+pkgconf:x64-windows package ABI: e797008c6cd6649c391b93724d443428a8acf6004bbbbfb5f6e8b6593ea2a018
+Installing 9/15 vcpkg-pkgconfig-get-modules:x64-windows@2024-04-03...
+Elapsed time to handle vcpkg-pkgconfig-get-modules:x64-windows: 6.51 ms
+vcpkg-pkgconfig-get-modules:x64-windows package ABI: cb5e6e2aa312fe21c1a1d3e6b5d463e3d3e0caf656a22e01bceaadf283eac93d
+Installing 10/15 libpq[core,lz4,openssl,zlib]:x64-windows@16.9#3...
+Elapsed time to handle libpq:x64-windows: 207 ms
+libpq:x64-windows package ABI: 2072e71fcee253694c041e76402a92c2efbd00f4e736581973c5eaeddc52a090
+Installing 11/15 c-ares:x64-windows@1.34.6#1...
+Elapsed time to handle c-ares:x64-windows: 10.4 ms
+c-ares:x64-windows package ABI: 1885c9cc2f820c1f437f9cb6b203f6ef81e041f55b2da8ec880cfca62e0b4b49
+Installing 12/15 trantor:x64-windows@1.5.26...
+Elapsed time to handle trantor:x64-windows: 16.8 ms
+trantor:x64-windows package ABI: c010f0c8c7bed4445cb6b30fca0d1904c26efc649cc4eea371b3b037c6d693f4
+Installing 13/15 jsoncpp:x64-windows@1.9.6...
+Elapsed time to handle jsoncpp:x64-windows: 12.4 ms
+jsoncpp:x64-windows package ABI: 8bbfbe5052eb3456153b293cca87fc941c386fc93d2afc992aea45d31edd2fe7
+Installing 14/15 brotli:x64-windows@1.2.0...
+Elapsed time to handle brotli:x64-windows: 19.2 ms
+brotli:x64-windows package ABI: b0dccb0fffff72ec1bda14727155f7f25be101eae8a641e2163998e55214290f
+Installing 15/15 drogon[core,orm,postgres]:x64-windows@1.9.12...
+Elapsed time to handle drogon:x64-windows: 36.5 ms
+drogon:x64-windows package ABI: 27145510c3b56c5d4d44fa674834c4be56f2353ee3f3a923683ce3758b7e1f1e
+Installed contents are licensed to you by owners. Microsoft is not responsible for, nor does it grant any licenses to, third-party packages.
+Some packages did not declare an SPDX license. Check the `copyright` file for each package for more information about their licensing.
+Packages installed in this vcpkg installation declare the following licenses:
+Apache-2.0
+BSD-2-Clause
+MIT
+PostgreSQL
+Zlib
+The package drogon provides CMake targets:
+
+    find_package(Drogon CONFIG REQUIRED)
+    target_link_libraries(main PRIVATE Drogon::Drogon)
+
+All requested installations completed successfully in: 478 ms

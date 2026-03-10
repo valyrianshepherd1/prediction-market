@@ -7,8 +7,7 @@ int main(int argc, char *argv[]) {
     app.setApplicationName(QStringLiteral("Prediction Market"));
 
     MarketWindow window;
-    window.resize(1180, 760);
-    window.show();
+    window.showFullScreen();
 
     return app.exec();
 }

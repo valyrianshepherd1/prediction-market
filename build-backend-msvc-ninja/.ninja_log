@@ -1,0 +1,26 @@
+# ninja log v7
+6	34	7948607625753414	C:/Users/aleks/CLionProjects/prediction-market/build-backend-msvc-ninja/CMakeFiles/cmake.verify_globs	f2d0954459438375
+41	13011	7948607626096577	CMakeFiles/backend_app.dir/src/controllers/HealthController.cpp.obj	129f1d04d9461a98
+35	13236	7948607625994958	CMakeFiles/backend_app.dir/src/controllers/AuthController.cpp.obj	74a2f3e4765edc85
+64	13483	7948607626325651	CMakeFiles/backend_app.dir/src/controllers/PortfolioController.cpp.obj	41482201668e80b
+71	13830	7948607626388858	CMakeFiles/backend_app.dir/src/controllers/TradeController.cpp.obj	bc200dd42eae2836
+56	13952	7948607626248571	CMakeFiles/backend_app.dir/src/controllers/OrderController.cpp.obj	9b7e213ce4f2aa84
+49	15492	7948607626166922	CMakeFiles/backend_app.dir/src/controllers/MarketController.cpp.obj	4ab497ae36eb70f2
+13833	22447	7948607764131419	CMakeFiles/backend_app.dir/src/repositories/MarketRepository.cpp.obj	47956e79de9dc440
+13486	23230	7948607760548263	CMakeFiles/backend_app.dir/src/repositories/AuthRepository.cpp.obj	ed8b7a44b32afa05
+13021	23582	7948607756901685	CMakeFiles/backend_app.dir/src/controllers/WalletController.cpp.obj	9a847ce5f3212971
+13238	23707	7948607758071141	CMakeFiles/backend_app.dir/src/main.cpp.obj	69776a5d7d1f886a
+14	49	7948610705655650	C:/Users/aleks/CLionProjects/prediction-market/build-backend-msvc-ninja/CMakeFiles/cmake.verify_globs	f2d0954459438375
+72	11780	7948610706228248	CMakeFiles/backend_app.dir/src/repositories/PortfolioRepository.cpp.obj	c8457d44b0671e9b
+82	12165	7948610706331651	CMakeFiles/backend_app.dir/src/repositories/TradeRepository.cpp.obj	85e669c7567b8411
+92	13752	7948610706431776	CMakeFiles/backend_app.dir/src/repositories/WalletRepository.cpp.obj	130ea7d39e73f61a
+52	13959	7948610705966703	CMakeFiles/backend_app.dir/src/repositories/Matching.cpp.obj	c8aef172797abd5
+99	14223	7948610706501072	CMakeFiles/backend_app.dir/src/services/AuthService.cpp.obj	4be595685d50455a
+65	16128	7948610706129097	CMakeFiles/backend_app.dir/src/repositories/OrderRepository.cpp.obj	36f706cdb9c4bcc8
+11784	20375	7948610823412794	CMakeFiles/backend_app.dir/src/services/MarketService.cpp.obj	9f3a5f8f9f1d52ba
+13763	20694	7948610843171288	CMakeFiles/backend_app.dir/src/services/PortfolioService.cpp.obj	6b6585494c14678f
+13963	20888	7948610845142098	CMakeFiles/backend_app.dir/src/services/TradeService.cpp.obj	dc446adfe377b2ee
+12171	21508	7948610827218879	CMakeFiles/backend_app.dir/src/services/OrderService.cpp.obj	dc03b59ef26c33e
+14228	22066	7948610847784936	CMakeFiles/backend_app.dir/src/services/WalletService.cpp.obj	60826d5e5949e963
+16129	23253	7948610866809732	CMakeFiles/backend_app.dir/src/util/AuthGuard.cpp.obj	6c5a63a61fac17f5
+23254	27592	7948610938047775	backend_app.exe	573e8b332f7c619d
