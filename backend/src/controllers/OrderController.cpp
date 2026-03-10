@@ -4,6 +4,7 @@
 #include "pm/services/OrderService.h"
 #include "pm/util/ApiError.h"
 #include "pm/util/AuthGuard.h"
+#include "pm/ws/WsHub.h"
 
 #include <drogon/drogon.h>
 #include <memory>
@@ -54,6 +55,26 @@ namespace {
         for (const auto &o: b.sell) j["sell"].append(orderToJson(o));
         return j;
     }
+
+    void publishOrderRealtimeSignals(const OrderRow &order, std::string_view reason) {
+        Json::Value userPayload = orderToJson(order);
+        userPayload["reason"] = std::string(reason);
+
+        Json::Value orderbookPayload;
+        orderbookPayload["reason"] = std::string(reason);
+        orderbookPayload["outcome_id"] = order.outcome_id;
+        orderbookPayload["order_id"] = order.id;
+
+        pm::ws::WsHub::instance().publish(
+            "orderbook:" + order.outcome_id,
+            "orderbook.invalidate",
+            orderbookPayload);
+
+        pm::ws::WsHub::instance().publish(
+            "user:" + order.user_id,
+            "order.changed",
+            userPayload);
+    }
 } // namespace
 
 void OrderController::createOrder(const drogon::HttpRequestPtr &req,
@@ -82,6 +103,7 @@ void OrderController::createOrder(const drogon::HttpRequestPtr &req,
             svc.createOrder(
                 principal.user_id, outcomeId, side, priceBp, qtyMicros,
                 [cbp](OrderRow created) {
+                    publishOrderRealtimeSignals(created, "order_created");
                     auto resp = HttpResponse::newHttpJsonResponse(orderToJson(created));
                     resp->setStatusCode(drogon::k201Created);
                     (*cbp)(resp);
@@ -210,6 +232,7 @@ void OrderController::cancelOrder(const drogon::HttpRequestPtr &req,
             svc.cancelOrderForUser(
                 principal.user_id, orderId,
                 [cbp](OrderRow o) {
+                    publishOrderRealtimeSignals(o, "order_canceled");
                     (*cbp)(HttpResponse::newHttpJsonResponse(orderToJson(o)));
                 },
                 [cbp](const pm::ApiError &e) {
