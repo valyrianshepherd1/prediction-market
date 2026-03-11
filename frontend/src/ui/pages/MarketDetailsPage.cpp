@@ -113,6 +113,14 @@ MarketDetailsPage::MarketDetailsPage(QWidget *parent)
     m_amountSpin->setButtonSymbols(QAbstractSpinBox::NoButtons);
     ticketLayout->addWidget(m_amountSpin);
 
+    connect(m_amountSpin,
+        qOverload<double>(&QDoubleSpinBox::valueChanged),
+        this,
+        [this](double) {
+            m_ticketStatusLabel->clear();
+            updateTicketUi();
+        });
+
     auto *quickRow = new QHBoxLayout;
     quickRow->setSpacing(8);
 
@@ -316,6 +324,7 @@ void MarketDetailsPage::setMarket(const ApiMarket &market, const QString &prefer
 
 void MarketDetailsPage::setOrderSide(const QString &side) {
     m_orderSide = normalizedSide(side);
+    m_ticketStatusLabel->clear();
     updateTicketUi();
 }
 
@@ -326,6 +335,7 @@ void MarketDetailsPage::selectBinaryOutcome(const QString &titleUpper) {
     }
 
     m_selectedOutcomeId = outcome->id;
+    m_ticketStatusLabel->clear();
     updateTicketUi();
 }
 
@@ -380,10 +390,10 @@ void MarketDetailsPage::updateTicketUi() {
     const ApiOutcome *outcome = selectedOutcome();
 
     const bool loggedIn =
-        m_api && (
-            m_api->isAuthenticated() ||
-            !m_api->currentSession().userId.trimmed().isEmpty()
-        );
+    m_api && (
+        m_api->isAuthenticated() ||
+        !m_api->currentSession().userId.trimmed().isEmpty()
+    );
 
     updateSideButtons();
     updateOutcomeButtons();

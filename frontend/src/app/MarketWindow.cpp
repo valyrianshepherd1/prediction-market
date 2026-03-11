@@ -133,15 +133,18 @@ MarketWindow::MarketWindow(QWidget *parent)
     m_sidebar = new Sidebar(this);
     m_sidebar->setFixedWidth(220);
 
-    m_marketDetailsPage = new MarketDetailsPage(this);
-    m_marketDetailsPage->setApiClient(m_api);
-    m_marketDetailsPage->setObjectName(QStringLiteral("CenterPage"));
+    m_api = new MarketApiClient(this);
 
     m_header = new HeaderBar(this);
     m_markets = new MarketsPage(this);
     m_profile = new ProfilePage(this);
     m_tradesPage = new TradesPage(this);
-    m_api = new MarketApiClient(this);
+
+    m_marketDetailsPage = new MarketDetailsPage(this);
+    m_marketDetailsPage->setApiClient(m_api);
+    m_marketDetailsPage->setObjectName(QStringLiteral("CenterPage"));
+
+    m_api->restoreSession();
 
     m_portfolioPage = createPlaceholderPage(
         QStringLiteral("Portfolio"),
@@ -220,6 +223,10 @@ MarketWindow::MarketWindow(QWidget *parent)
 
     connect(m_marketDetailsPage, &MarketDetailsPage::backRequested, this, [this]() {
         showSection(QStringLiteral("markets"));
+    });
+
+    connect(m_marketDetailsPage, &MarketDetailsPage::loginRequested, this, [this]() {
+    showSection(QStringLiteral("profile"));
     });
 
     connect(m_portfolioGate, &AuthRequiredPage::loginRequested, this, &MarketWindow::openLoginDialog);
