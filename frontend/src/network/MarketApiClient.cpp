@@ -686,3 +686,133 @@ void MarketApiClient::fetchMyTrades(int limit, int offset) {
             });
 }
 
+void MarketApiClient::adminDepositToCurrentUser(qint64 amount) {
+    if (!isAuthenticated()) {
+        emit depositError(QStringLiteral("Log in first."));
+        return;
+    }
+
+    if (m_session.userId.trimmed().isEmpty()) {
+        emit depositError(QStringLiteral("Current user id is missing."));
+        return;
+    }
+
+    if (amount <= 0) {
+        emit depositError(QStringLiteral("Amount must be greater than zero."));
+        return;
+    }
+
+    emit depositBusyChanged(true);
+
+    QJsonObject body;
+    body.insert(QStringLiteral("user_id"), m_session.userId);
+    body.insert(QStringLiteral("amount"), QJsonValue(static_cast<double>(amount)));
+
+    postJson(apiUrl(QStringLiteral("/admin/deposit")),
+             body,
+             true,
+             [this](const QJsonDocument &document) {
+                 emit depositBusyChanged(false);
+
+                 if (!document.isObject()) {
+                     emit depositError(QStringLiteral("/admin/deposit did not return an object."));
+                     return;
+                 }
+
+                 const QJsonObject object = document.object();
+
+                 ApiWallet wallet;
+                 wallet.userId = object.value(QStringLiteral("user_id")).toString();
+                 wallet.available = object.value(QStringLiteral("available")).toVariant().toLongLong();
+                 wallet.reserved = object.value(QStringLiteral("reserved")).toVariant().toLongLong();
+                 wallet.updatedAt = object.value(QStringLiteral("updated_at")).toString();
+
+                 emit depositSucceeded(wallet);
+             },
+             [this](int statusCode, const QString &message) {
+                 emit depositBusyChanged(false);
+
+                 if (statusCode == 401 || statusCode == 403) {
+                     emit depositError(QStringLiteral(
+                         "Deposit is currently admin-only in the backend."));
+                     return;
+                 }
+
+                 emit depositError(QStringLiteral("Could not add money.\n%1").arg(message));
+             });
+}
+
+void MarketApiClient::createOrder(const QString &outcomeId,
+                                  const QString &side,
+                                  int priceBasisPoints,
+                                  qint64 quantityMicros) {
+    if (!isAuthenticated()) {
+        emit orderError(QStringLiteral("Log in or Sign up to place an order."));
+        return;
+    }
+
+    const QString normalizedSide = side.trimmed().toUpper();
+
+    if (outcomeId.trimmed().isEmpty()) {
+        emit orderError(QStringLiteral("No outcome is selected."));
+        return;
+    }
+
+    if (normalizedSide != QStringLiteral("BUY") &&
+        normalizedSide != QStringLiteral("SELL")) {
+        emit orderError(QStringLiteral("Order side must be BUY or SELL."));
+        return;
+    }
+
+    if (priceBasisPoints <= 0 || priceBasisPoints >= 10000) {
+        emit orderError(QStringLiteral("Price must be between 0.01% and 99.99%."));
+        return;
+    }
+
+    if (quantityMicros <= 0) {
+        emit orderError(QStringLiteral("Quantity must be greater than zero."));
+        return;
+    }
+
+    emit orderBusyChanged(true);
+
+    QJsonObject body;
+    body.insert(QStringLiteral("outcome_id"), outcomeId);
+    body.insert(QStringLiteral("side"), normalizedSide);
+    body.insert(QStringLiteral("price_bp"), priceBasisPoints);
+    body.insert(QStringLiteral("qty_micros"), QJsonValue(static_cast<double>(quantityMicros)));
+
+    postJson(apiUrl(QStringLiteral("/orders")),
+             body,
+             true,
+             [this](const QJsonDocument &document) {
+                 emit orderBusyChanged(false);
+
+                 if (!document.isObject()) {
+                     emit orderError(QStringLiteral("/orders did not return an object."));
+                     return;
+                 }
+
+                 const QJsonObject object = document.object();
+
+                 ApiOrder order;
+                 order.id = object.value(QStringLiteral("id")).toString();
+                 order.userId = object.value(QStringLiteral("user_id")).toString();
+                 order.outcomeId = object.value(QStringLiteral("outcome_id")).toString();
+                 order.side = object.value(QStringLiteral("side")).toString();
+                 order.priceBasisPoints = object.value(QStringLiteral("price_bp")).toInt();
+                 order.quantityTotalMicros =
+                     object.value(QStringLiteral("qty_total_micros")).toVariant().toLongLong();
+                 order.quantityRemainingMicros =
+                     object.value(QStringLiteral("qty_remaining_micros")).toVariant().toLongLong();
+                 order.status = object.value(QStringLiteral("status")).toString();
+                 order.createdAt = object.value(QStringLiteral("created_at")).toString();
+                 order.updatedAt = object.value(QStringLiteral("updated_at")).toString();
+
+                 emit orderCreated(order);
+             },
+             [this](int, const QString &message) {
+                 emit orderBusyChanged(false);
+                 emit orderError(QStringLiteral("Could not place order.\n%1").arg(message));
+             });
+}

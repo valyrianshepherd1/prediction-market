@@ -3,6 +3,8 @@
 #include <QWidget>
 
 class QLabel;
+class QLineEdit;
+class QPushButton;
 
 class ProfilePage : public QWidget {
     Q_OBJECT
@@ -26,4 +28,5 @@ private:
     QLabel *m_availableValue = nullptr;
     QLabel *m_reservedValue = nullptr;
     QLabel *m_statusValue = nullptr;
+
 };

@@ -2,9 +2,12 @@
 
 #include <QHBoxLayout>
 #include <QLabel>
+#include <QLineEdit>
 #include <QLocale>
 #include <QPushButton>
+#include <QRegularExpressionValidator>
 #include <QVBoxLayout>
+#include <QWidget>
 
 namespace {
 
@@ -14,38 +17,57 @@ QString formatUnits(qint64 amount, const QString &unitLabel) {
         .arg(unitLabel);
 }
 
+QWidget *makeSectionTitle(const QString &text, QWidget *parent = nullptr) {
+    auto *label = new QLabel(text, parent);
+    label->setStyleSheet(QStringLiteral(
+        "color: white; font-size: 20px; font-weight: 700;"));
+    return label;
+}
+
 } // namespace
 
 ProfilePage::ProfilePage(QWidget *parent)
     : QWidget(parent) {
     auto *root = new QVBoxLayout(this);
     root->setContentsMargins(24, 24, 24, 24);
-    root->setSpacing(16);
+    root->setSpacing(18);
 
-    auto *card = new QWidget(this);
-    card->setObjectName(QStringLiteral("ProfileCard"));
-    card->setStyleSheet(R"(
+    auto *contentRow = new QHBoxLayout;
+    contentRow->setSpacing(18);
+
+    auto *leftColumn = new QVBoxLayout;
+    leftColumn->setSpacing(14);
+
+    leftColumn->addWidget(makeSectionTitle(QStringLiteral("Profile"), this), 0, Qt::AlignLeft);
+
+    auto *profileCard = new QWidget(this);
+    profileCard->setObjectName(QStringLiteral("ProfileCard"));
+    profileCard->setMinimumWidth(520);
+    profileCard->setMaximumWidth(640);
+    profileCard->setStyleSheet(R"(
         #ProfileCard {
             background: #07111d;
             border: 1px solid #132238;
             border-radius: 16px;
         }
-        QLabel {
+        #ProfileCard QLabel {
             color: white;
+            background: transparent;
+            border: none;
         }
     )");
 
-    auto *cardLayout = new QVBoxLayout(card);
-    cardLayout->setContentsMargins(18, 18, 18, 18);
-    cardLayout->setSpacing(12);
+    auto *profileLayout = new QVBoxLayout(profileCard);
+    profileLayout->setContentsMargins(18, 18, 18, 18);
+    profileLayout->setSpacing(12);
 
-    auto addRow = [card, cardLayout](const QString &label, QLabel **valueLabel) {
+    auto addRow = [profileCard, profileLayout](const QString &label, QLabel **valueLabel) {
         auto *row = new QHBoxLayout;
 
-        auto *key = new QLabel(label, card);
+        auto *key = new QLabel(label, profileCard);
         key->setStyleSheet(QStringLiteral("color: #9fb2c7; font-size: 14px;"));
 
-        *valueLabel = new QLabel(QStringLiteral("—"), card);
+        *valueLabel = new QLabel(QStringLiteral("—"), profileCard);
         (*valueLabel)->setStyleSheet(QStringLiteral("font-size: 18px; font-weight: 600;"));
         (*valueLabel)->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
 
@@ -53,7 +75,7 @@ ProfilePage::ProfilePage(QWidget *parent)
         row->addStretch(1);
         row->addWidget(*valueLabel);
 
-        cardLayout->addLayout(row);
+        profileLayout->addLayout(row);
     };
 
     addRow(QStringLiteral("Username"), &m_nameValue);
@@ -61,12 +83,12 @@ ProfilePage::ProfilePage(QWidget *parent)
     addRow(QStringLiteral("Available"), &m_availableValue);
     addRow(QStringLiteral("Reserved"), &m_reservedValue);
 
-    m_statusValue = new QLabel(card);
+    m_statusValue = new QLabel(profileCard);
     m_statusValue->setWordWrap(true);
     m_statusValue->setStyleSheet(QStringLiteral("color: #9fb2c7; font-size: 13px;"));
-    cardLayout->addWidget(m_statusValue);
+    profileLayout->addWidget(m_statusValue);
 
-    root->addWidget(card, 0, Qt::AlignHCenter);
+    leftColumn->addWidget(profileCard, 0, Qt::AlignLeft);
 
     auto *buttons = new QHBoxLayout;
     buttons->setSpacing(10);
@@ -80,13 +102,19 @@ ProfilePage::ProfilePage(QWidget *parent)
     connect(back, &QPushButton::clicked, this, &ProfilePage::backRequested);
     connect(logout, &QPushButton::clicked, this, &ProfilePage::logoutRequested);
 
-    buttons->addStretch(1);
     buttons->addWidget(back);
     buttons->addWidget(logout);
     buttons->addStretch(1);
 
-    root->addLayout(buttons);
-    root->addStretch(1);
+    leftColumn->addLayout(buttons);
+    leftColumn->addStretch(1);
+
+    contentRow->addLayout(leftColumn, 1);
+
+    root->addLayout(contentRow, 1);
+
+    connect(back, &QPushButton::clicked, this, &ProfilePage::backRequested);
+    connect(logout, &QPushButton::clicked, this, &ProfilePage::logoutRequested);
 
     setUserName(QStringLiteral("Guest"));
     setEmail(QStringLiteral("—"));

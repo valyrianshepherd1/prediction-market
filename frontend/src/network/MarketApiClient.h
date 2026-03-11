@@ -90,10 +90,12 @@ public:
     void registerUser(const QString &email, const QString &username, const QString &password);
     void logout();
 
+    void adminDepositToCurrentUser(qint64 amount);
+
     void createOrder(const QString &outcomeId,
-                     const QString &side,
-                     int priceBasisPoints,
-                     qint64 quantityMicros);
+                 const QString &side,
+                 int priceBasisPoints,
+                 qint64 quantityMicros);
 
     [[nodiscard]] QString baseUrl() const;
     [[nodiscard]] bool isAuthenticated() const;
@@ -117,6 +119,10 @@ signals:
     void orderBusyChanged(bool busy);
     void orderCreated(const ApiOrder &order);
     void orderError(const QString &message);
+
+    void depositBusyChanged(bool busy);
+    void depositSucceeded(const ApiWallet &wallet);
+    void depositError(const QString &message);
 
 private:
     void getJson(const QUrl &url,
@@ -156,3 +162,4 @@ private:
     QVector<ApiMarket> m_markets;
     int m_pendingMarketRequests = 0;
 };
+

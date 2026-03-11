@@ -16,6 +16,7 @@
 #include <QStackedWidget>
 #include <QVBoxLayout>
 #include <QWidget>
+#include <QDateTime>
 
 namespace {
 
@@ -302,6 +303,14 @@ void MarketWindow::showSection(const QString &pageId) {
     m_sidebar->setCurrentPage(pageId);
 }
 
+QString formatDateTimeReadable(const QString &value) {
+    const QDateTime dt = QDateTime::fromString(value, Qt::ISODate);
+    if (!dt.isValid()) {
+        return value;
+    }
+    return dt.toLocalTime().toString(QStringLiteral("dd MMM yyyy, HH:mm"));
+}
+
 void MarketWindow::onWalletLoaded(const ApiWallet &wallet) {
     const QString displayName =
         m_profileName.trimmed().isEmpty() ? wallet.userId : m_profileName;
@@ -309,9 +318,10 @@ void MarketWindow::onWalletLoaded(const ApiWallet &wallet) {
     m_profile->setUserName(displayName);
     m_profile->setWalletAmounts(wallet.available, wallet.reserved);
     m_profile->setStatusMessage(
-        wallet.updatedAt.isEmpty()
-            ? QStringLiteral("Wallet loaded successfully.")
-            : QStringLiteral("Wallet updated at %1").arg(wallet.updatedAt));
+     wallet.updatedAt.isEmpty()
+         ? QStringLiteral("Wallet loaded successfully.")
+         : QStringLiteral("Last wallet update: %1")
+               .arg(formatDateTimeReadable(wallet.updatedAt)));
 
     m_header->setBalanceText(QStringLiteral("Balance: %1").arg(formatUnits(wallet.available)));
     m_header->setAvatarText(initialsFromName(displayName));
