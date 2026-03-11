@@ -62,12 +62,8 @@ void MarketsPage::addCard(const ApiMarket &market) {
     auto *card = new MarketCardWidget(m_container);
     card->setMarket(market);
 
-    connect(card, &MarketCardWidget::yesClicked, this, [this, market]() {
-        emit marketRequested(market, QStringLiteral("YES"));
-    });
-
-    connect(card, &MarketCardWidget::noClicked, this, [this, market]() {
-        emit marketRequested(market, QStringLiteral("NO"));
+    connect(card, &MarketCardWidget::openRequested, this, [this, market]() {
+        emit marketRequested(market, QString());
     });
 
     const int idx = m_grid->count();

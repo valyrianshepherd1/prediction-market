@@ -43,6 +43,19 @@ struct ApiTrade {
     QString createdAt;
 };
 
+struct ApiOrder {
+    QString id;
+    QString userId;
+    QString outcomeId;
+    QString side;
+    int priceBasisPoints = 0;
+    qint64 quantityTotalMicros = 0;
+    qint64 quantityRemainingMicros = 0;
+    QString status;
+    QString createdAt;
+    QString updatedAt;
+};
+
 struct ApiSession {
     QString userId;
     QString email;
@@ -55,6 +68,7 @@ Q_DECLARE_METATYPE(ApiOutcome)
 Q_DECLARE_METATYPE(ApiMarket)
 Q_DECLARE_METATYPE(ApiWallet)
 Q_DECLARE_METATYPE(ApiTrade)
+Q_DECLARE_METATYPE(ApiOrder)
 Q_DECLARE_METATYPE(ApiSession)
 Q_DECLARE_METATYPE(QVector<ApiMarket>)
 Q_DECLARE_METATYPE(QVector<ApiTrade>)
@@ -76,6 +90,11 @@ public:
     void registerUser(const QString &email, const QString &username, const QString &password);
     void logout();
 
+    void createOrder(const QString &outcomeId,
+                     const QString &side,
+                     int priceBasisPoints,
+                     qint64 quantityMicros);
+
     [[nodiscard]] QString baseUrl() const;
     [[nodiscard]] bool isAuthenticated() const;
     [[nodiscard]] ApiSession currentSession() const;
@@ -94,6 +113,10 @@ signals:
     void sessionCleared();
     void authError(const QString &message);
     void loggedOut();
+
+    void orderBusyChanged(bool busy);
+    void orderCreated(const ApiOrder &order);
+    void orderError(const QString &message);
 
 private:
     void getJson(const QUrl &url,

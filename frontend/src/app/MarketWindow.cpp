@@ -133,6 +133,7 @@ MarketWindow::MarketWindow(QWidget *parent)
     m_sidebar->setFixedWidth(220);
 
     m_marketDetailsPage = new MarketDetailsPage(this);
+    m_marketDetailsPage->setApiClient(m_api);
     m_marketDetailsPage->setObjectName(QStringLiteral("CenterPage"));
 
     m_header = new HeaderBar(this);

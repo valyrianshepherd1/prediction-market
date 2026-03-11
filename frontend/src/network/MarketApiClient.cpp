@@ -685,3 +685,4 @@ void MarketApiClient::fetchMyTrades(int limit, int offset) {
                 emit tradesError(QStringLiteral("Could not load trades.\n%1").arg(message));
             });
 }
+

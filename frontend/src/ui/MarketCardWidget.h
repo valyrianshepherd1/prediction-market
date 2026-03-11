@@ -3,12 +3,9 @@
 #include "../network/MarketApiClient.h"
 
 #include <QFrame>
-#include <QVector>
 
 class QLabel;
-class QPushButton;
-class QVBoxLayout;
-class QWidget;
+class QMouseEvent;
 
 class MarketCardWidget : public QFrame {
     Q_OBJECT
@@ -18,20 +15,17 @@ public:
     void setMarket(const ApiMarket &market);
 
     signals:
-        void yesClicked();
-    void noClicked();
+        void openRequested();
+
+protected:
+    void mousePressEvent(QMouseEvent *event) override;
 
 private:
-    void clearVariantRows();
-    void addVariantPreview(const ApiOutcome &outcome);
+    bool isBinaryYesNoMarket(const ApiMarket &market) const;
     QString metaText(const ApiMarket &market) const;
-    QString noTextFor(int yesPercent) const;
 
-    QLabel *m_question = nullptr;
     QLabel *m_meta = nullptr;
-    QWidget *m_variantsContainer = nullptr;
-    QVBoxLayout *m_variantsLayout = nullptr;
-    QLabel *m_moreLabel = nullptr;
-    QPushButton *m_yesButton = nullptr;
-    QPushButton *m_noButton = nullptr;
+    QLabel *m_question = nullptr;
+    QLabel *m_yesValue = nullptr;
+    QLabel *m_noValue = nullptr;
 };

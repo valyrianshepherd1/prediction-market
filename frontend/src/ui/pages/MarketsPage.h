@@ -14,7 +14,7 @@ public:
     explicit MarketsPage(QWidget *parent = nullptr);
 
     signals:
-        void marketRequested(const ApiMarket &market, const QString &preferredSide);
+        void marketRequested(const ApiMarket &market, const QString &preferredSelection);
 
 public slots:
     void setMarkets(const QVector<ApiMarket> &markets);
