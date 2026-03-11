@@ -1,47 +1,50 @@
 #include "HeaderBar.h"
-#include <QHBoxLayout>
-#include <QPushButton>
-#include <QToolButton>
-#include <QLabel>
-#include <QPainter>
-#include <QPixmap>
 
-static QIcon makeProfileIcon(int size) {
-    QPixmap pix(size, size);
-    pix.fill(Qt::transparent);
-    QPainter p(&pix);
-    p.setRenderHint(QPainter::Antialiasing, true);
-    p.setBrush(QColor(220, 220, 220));
-    p.setPen(Qt::NoPen);
-    p.drawEllipse(0, 0, size, size);
-    p.setBrush(QColor(160, 160, 160));
-    p.drawEllipse(QPoint(size/2, size/2 - size/6), size/6, size/6);
-    p.drawRoundedRect(QRect(size/2 - size/4, size/2, size/2, size/3), size/8, size/8);
-    return QIcon(pix);
-}
+#include <QHBoxLayout>
+#include <QLabel>
+#include <QPushButton>
 
 HeaderBar::HeaderBar(QWidget *parent) : QWidget(parent) {
-    setObjectName("HeaderBar");
-    auto *h = new QHBoxLayout(this);
-    h->setContentsMargins(10, 10, 10, 10);
-    h->setSpacing(10);
+    setObjectName(QStringLiteral("HeaderBar"));
 
-    m_title = new QLabel("Trending", this);
-    m_title->setObjectName("HeaderTitle");
+    auto *layout = new QHBoxLayout(this);
+    layout->setContentsMargins(18, 12, 18, 12);
+    layout->setSpacing(14);
 
-    auto *profile = new QToolButton(this);
-    profile->setAutoRaise(true);
-    profile->setCursor(Qt::PointingHandCursor);
-    profile->setIcon(makeProfileIcon(26));
-    profile->setIconSize(QSize(26, 26));
-    connect(profile, &QToolButton::clicked, this, &HeaderBar::profileClicked);
+    m_titleLabel = new QLabel(QStringLiteral("Markets"), this);
+    m_titleLabel->setObjectName(QStringLiteral("HeaderTitle"));
+    m_titleLabel->setAlignment(Qt::AlignVCenter | Qt::AlignLeft);
 
-    h->addStretch(1);
-    h->addWidget(m_title);
-    h->addStretch(1);
-    h->addWidget(profile);
+    m_balanceLabel = new QLabel(QStringLiteral("Balance: —"), this);
+    m_balanceLabel->setObjectName(QStringLiteral("HeaderBalance"));
+    m_balanceLabel->setAlignment(Qt::AlignVCenter | Qt::AlignRight);
+
+    m_avatarButton = new QPushButton(QStringLiteral("A"), this);
+    m_avatarButton->setObjectName(QStringLiteral("HeaderAvatar"));
+    m_avatarButton->setFixedSize(40, 40);
+    m_avatarButton->setCursor(Qt::PointingHandCursor);
+
+    layout->addWidget(m_titleLabel, 1);
+    layout->addWidget(m_balanceLabel, 0);
+    layout->addWidget(m_avatarButton, 0);
+
+    connect(m_avatarButton, &QPushButton::clicked, this, &HeaderBar::profileClicked);
 }
 
-void HeaderBar::setTitle(const QString &t) {
-    m_title->setText(t);
+void HeaderBar::setTitle(const QString &title) {
+    if (m_titleLabel) {
+        m_titleLabel->setText(title);
+    }
+}
+
+void HeaderBar::setBalanceText(const QString &text) {
+    if (m_balanceLabel) {
+        m_balanceLabel->setText(text);
+    }
+}
+
+void HeaderBar::setAvatarText(const QString &text) {
+    if (m_avatarButton) {
+        m_avatarButton->setText(text);
+    }
 }

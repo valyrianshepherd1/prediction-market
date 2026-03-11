@@ -1,21 +1,24 @@
 #pragma once
+
 #include <QWidget>
 
-class QPushButton;
-class QToolButton;
 class QLabel;
+class QPushButton;
 
 class HeaderBar : public QWidget {
     Q_OBJECT
 public:
     explicit HeaderBar(QWidget *parent = nullptr);
 
-    signals:
-    void profileClicked();
+    void setTitle(const QString &title);
+    void setBalanceText(const QString &text);
+    void setAvatarText(const QString &text);
 
-public:
-    void setTitle(const QString &t);
+    signals:
+        void profileClicked();
 
 private:
-    QLabel *m_title = nullptr;
+    QLabel *m_titleLabel = nullptr;
+    QLabel *m_balanceLabel = nullptr;
+    QPushButton *m_avatarButton = nullptr;
 };

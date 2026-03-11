@@ -5,6 +5,7 @@
 
 class HeaderBar;
 class MarketsPage;
+class Sidebar;
 class QStackedWidget;
 class ProfilePage;
 
@@ -14,16 +15,19 @@ public:
     explicit MarketWindow(QWidget *parent = nullptr);
 
 private slots:
-    void openProfile();
-    void showMarkets();
+    void showSection(const QString &pageId);
     void onWalletLoaded(const ApiWallet &wallet);
     void onWalletError(const QString &message);
 
 private:
     HeaderBar *m_header = nullptr;
+    Sidebar *m_sidebar = nullptr;
     MarketsPage *m_markets = nullptr;
-    QStackedWidget *m_stack = nullptr;
+    QWidget *m_portfolioPage = nullptr;
+    QWidget *m_ordersPage = nullptr;
+    QWidget *m_tradesPage = nullptr;
     ProfilePage *m_profile = nullptr;
+    QStackedWidget *m_stack = nullptr;
     MarketApiClient *m_api = nullptr;
 
     QString m_profileName = QStringLiteral("Guest");
