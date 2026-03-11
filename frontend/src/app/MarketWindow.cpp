@@ -1,159 +1,52 @@
 #include "MarketWindow.h"
+
 #include "../ui/HeaderBar.h"
 #include "../ui/Sidebar.h"
 #include "../ui/pages/MarketsPage.h"
 #include "../ui/pages/ProfilePage.h"
+#include "../ui/pages/TradesPage.h"
 
 #include <QApplication>
-#include <QFrame>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QLocale>
-#include <QPushButton>
 #include <QStackedWidget>
 #include <QVBoxLayout>
 #include <QWidget>
 
 namespace {
+
 QString darkStyle() {
     return R"(
-        QWidget {
-            background: #0b0f14;
-            color: #e8eef5;
-            font-size: 14px;
-        }
+        QWidget { background: #0b0f14; color: #e8eef5; font-size: 14px; }
+        #Sidebar { background: #0d141d; border: 1px solid #1b2430; border-radius: 16px; }
+        #SidebarLogo { font-size: 24px; font-weight: 700; color: #d8e4f0; padding: 10px 6px; }
+        #Sidebar QPushButton { text-align: left; background: transparent; border: 1px solid transparent; border-radius: 10px; padding: 10px 12px; color: #c4d2e0; font-size: 15px; }
+        #Sidebar QPushButton:hover { background: #141d29; border-color: #1b2430; }
+        #Sidebar QPushButton:checked { background: #182331; border-color: #2a394c; color: white; font-weight: 600; }
+        #SidebarStatus { color: #9fb0c3; font-size: 13px; padding-top: 6px; }
 
-        #Sidebar {
-            background: #0d141d;
-            border: 1px solid #1b2430;
-            border-radius: 16px;
-        }
+        #HeaderBar { background: #0d141d; border: 1px solid #1b2430; border-radius: 16px; }
+        #HeaderTitle { font-size: 22px; font-weight: 700; color: white; }
+        #HeaderBalance { color: #c8d7e6; font-size: 15px; padding-right: 4px; }
+        #HeaderAvatar { background: #1d7dfa; color: white; border: none; border-radius: 20px; font-size: 15px; font-weight: 700; padding: 0; }
+        #HeaderAvatar:hover { background: #3c90fb; }
 
-        #SidebarLogo {
-            font-size: 24px;
-            font-weight: 700;
-            color: #d8e4f0;
-            padding: 10px 6px;
-        }
+        #CenterPage { background: #0d141d; border: 1px solid #1b2430; border-radius: 18px; }
+        #CenterPageTitle { font-size: 28px; font-weight: 700; color: white; }
+        #CenterPageText { color: #9fb0c3; font-size: 15px; }
 
-        #Sidebar QPushButton {
-            text-align: left;
-            background: transparent;
-            border: 1px solid transparent;
-            border-radius: 10px;
-            padding: 10px 12px;
-            color: #c4d2e0;
-            font-size: 15px;
-        }
+        QPushButton { background: #141c26; border: 1px solid #1b2430; padding: 8px 12px; border-radius: 10px; }
+        QPushButton:hover { background: #182131; }
 
-        #Sidebar QPushButton:hover {
-            background: #141d29;
-            border-color: #1b2430;
-        }
+        #MarketCard { background: #101722; border: 1px solid #1b2430; border-radius: 14px; }
+        #MarketQuestion { font-size: 15px; font-weight: 600; }
+        #MarketVolume { color: #9fb0c3; font-size: 12px; }
 
-        #Sidebar QPushButton:checked {
-            background: #182331;
-            border-color: #2a394c;
-            color: white;
-            font-weight: 600;
-        }
+        QProgressBar { border: none; background: #0b0f14; border-radius: 5px; }
+        QProgressBar::chunk { background: #20c997; border-radius: 5px; }
 
-        #SidebarStatus {
-            color: #9fb0c3;
-            font-size: 13px;
-            padding-top: 6px;
-        }
-
-        #HeaderBar {
-            background: #0d141d;
-            border: 1px solid #1b2430;
-            border-radius: 16px;
-        }
-
-        #HeaderTitle {
-            font-size: 22px;
-            font-weight: 700;
-            color: white;
-        }
-
-        #HeaderBalance {
-            color: #c8d7e6;
-            font-size: 15px;
-            padding-right: 4px;
-        }
-
-        #HeaderAvatar {
-            background: #1d7dfa;
-            color: white;
-            border: none;
-            border-radius: 20px;
-            font-size: 15px;
-            font-weight: 700;
-            padding: 0;
-        }
-
-        #HeaderAvatar:hover {
-            background: #3c90fb;
-        }
-
-        #CenterPage {
-            background: #0d141d;
-            border: 1px solid #1b2430;
-            border-radius: 18px;
-        }
-
-        #CenterPageTitle {
-            font-size: 28px;
-            font-weight: 700;
-            color: white;
-        }
-
-        #CenterPageText {
-            color: #9fb0c3;
-            font-size: 15px;
-        }
-
-        QPushButton {
-            background: #141c26;
-            border: 1px solid #1b2430;
-            padding: 8px 12px;
-            border-radius: 10px;
-        }
-
-        QPushButton:hover {
-            background: #182131;
-        }
-
-        #MarketCard {
-            background: #101722;
-            border: 1px solid #1b2430;
-            border-radius: 14px;
-        }
-
-        #MarketQuestion {
-            font-size: 15px;
-            font-weight: 600;
-        }
-
-        #MarketVolume {
-            color: #9fb0c3;
-            font-size: 12px;
-        }
-
-        QProgressBar {
-            border: none;
-            background: #0b0f14;
-            border-radius: 5px;
-        }
-
-        QProgressBar::chunk {
-            background: #20c997;
-            border-radius: 5px;
-        }
-
-        #OutcomePct {
-            color: #9fb0c3;
-        }
+        #OutcomePct { color: #9fb0c3; }
     )";
 }
 
@@ -175,6 +68,7 @@ QString initialsFromName(const QString &name) {
     if (parts.size() >= 2) {
         return QString(parts[0].front()).append(parts[1].front()).toUpper();
     }
+
     return QString(trimmed.front()).toUpper();
 }
 
@@ -203,15 +97,16 @@ QWidget *createPlaceholderPage(const QString &title, const QString &text, QWidge
 
     return page;
 }
+
 } // namespace
 
-MarketWindow::MarketWindow(QWidget *parent) : QMainWindow(parent) {
+MarketWindow::MarketWindow(QWidget *parent)
+    : QMainWindow(parent) {
     setWindowFlags(Qt::Window |
                    Qt::CustomizeWindowHint |
                    Qt::WindowMinimizeButtonHint |
                    Qt::WindowMaximizeButtonHint |
                    Qt::WindowCloseButtonHint);
-
     setWindowTitle(QStringLiteral("PreDgict"));
 
     auto *central = new QWidget(this);
@@ -235,22 +130,23 @@ MarketWindow::MarketWindow(QWidget *parent) : QMainWindow(parent) {
     m_header = new HeaderBar(this);
     m_markets = new MarketsPage(this);
     m_profile = new ProfilePage(this);
+    m_tradesPage = new TradesPage(this);
     m_api = new MarketApiClient(this);
 
     m_portfolioPage = createPlaceholderPage(
         QStringLiteral("Portfolio"),
-        QStringLiteral("This page will show the user portfolio, positions and exposure."), this);
+        QStringLiteral("This page will show the user portfolio, positions and exposure."),
+        this);
 
     m_ordersPage = createPlaceholderPage(
         QStringLiteral("Orders"),
-        QStringLiteral("This page will show active, filled and cancelled orders."), this);
-
-    m_tradesPage = createPlaceholderPage(
-        QStringLiteral("Trades"),
-        QStringLiteral("This page will show trade history and execution details."), this);
+        QStringLiteral("This page will show active, filled and cancelled orders."),
+        this);
 
     m_markets->setObjectName(QStringLiteral("CenterPage"));
     m_profile->setObjectName(QStringLiteral("CenterPage"));
+    m_tradesPage->setObjectName(QStringLiteral("CenterPage"));
+    m_tradesPage->setCurrentUserId(m_api->configuredUserId());
 
     m_stack = new QStackedWidget(this);
     m_stack->addWidget(m_markets);
@@ -287,6 +183,8 @@ MarketWindow::MarketWindow(QWidget *parent) : QMainWindow(parent) {
     connect(m_api, &MarketApiClient::marketsError, m_markets, &MarketsPage::setError);
     connect(m_api, &MarketApiClient::walletReady, this, &MarketWindow::onWalletLoaded);
     connect(m_api, &MarketApiClient::walletError, this, &MarketWindow::onWalletError);
+    connect(m_api, &MarketApiClient::tradesReady, m_tradesPage, &TradesPage::setTrades);
+    connect(m_api, &MarketApiClient::tradesError, m_tradesPage, &TradesPage::setError);
 
     m_sidebar->setStatusText(QStringLiteral("Status: loading markets..."));
     m_markets->setLoading(QStringLiteral("Loading markets from %1…").arg(m_api->baseUrl()));
@@ -296,8 +194,7 @@ MarketWindow::MarketWindow(QWidget *parent) : QMainWindow(parent) {
         m_profile->setStatusMessage(QStringLiteral("Loading wallet from %1…").arg(m_api->baseUrl()));
         m_api->fetchWallet();
     } else {
-        m_profile->setStatusMessage(
-            QStringLiteral("Set PM_FRONTEND_USER_ID to load a real wallet."));
+        m_profile->setStatusMessage(QStringLiteral("Set PM_FRONTEND_USER_ID to load a real wallet."));
     }
 
     showSection(QStringLiteral("markets"));
@@ -316,6 +213,15 @@ void MarketWindow::showSection(const QString &pageId) {
     } else if (pageId == QStringLiteral("trades")) {
         m_stack->setCurrentWidget(m_tradesPage);
         m_header->setTitle(QStringLiteral("Trades"));
+
+        m_tradesPage->setCurrentUserId(m_api->configuredUserId());
+
+        if (!m_api->configuredUserId().trimmed().isEmpty()) {
+            m_tradesPage->setLoading(QStringLiteral("Loading trades from %1…").arg(m_api->baseUrl()));
+            m_api->fetchMyTrades();
+        } else {
+            m_tradesPage->setError(QStringLiteral("Set PM_FRONTEND_USER_ID before opening Trades."));
+        }
     } else if (pageId == QStringLiteral("profile")) {
         m_stack->setCurrentWidget(m_profile);
         m_header->setTitle(QStringLiteral("Profile"));

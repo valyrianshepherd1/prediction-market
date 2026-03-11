@@ -24,6 +24,10 @@ add_executable(frontend_app
         src/ui/Sidebar.cpp
         src/ui/pages/ProfilePage.h
         src/ui/pages/ProfilePage.cpp
+        src/ui/pages/TradesPage.h
+        src/ui/pages/TradesPage.cpp
+        src/ui/pages/TradesPage.h
+        src/ui/pages/TradesPage.cpp
 )
 
 target_link_libraries(frontend_app PRIVATE Qt6::Widgets Qt6::Network)

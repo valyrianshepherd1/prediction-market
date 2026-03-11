@@ -3,14 +3,13 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QJsonParseError>
 #include <QNetworkReply>
 #include <QNetworkRequest>
-#include <QSslError>
 #include <QUrlQuery>
 
-#include <functional>
-
 namespace {
+
 QString normalizeBaseUrl() {
     const QString configured = qEnvironmentVariable("PM_API_BASE_URL");
     if (!configured.trimmed().isEmpty()) {
@@ -49,7 +48,8 @@ int bestIndicativePrice(const QJsonObject &orderBook, bool *hasPrice = nullptr) 
 
     return 0;
 }
-} // namespace
+
+}
 
 MarketApiClient::MarketApiClient(QObject *parent)
     : QObject(parent),
@@ -67,6 +67,7 @@ QString MarketApiClient::configuredUserId() const {
 QUrl MarketApiClient::apiUrl(const QString &pathWithQuery) const {
     QUrl url = m_baseUrl;
     QString normalizedPath = pathWithQuery;
+
     if (!normalizedPath.startsWith('/')) {
         normalizedPath.prepend('/');
     }
@@ -74,6 +75,7 @@ QUrl MarketApiClient::apiUrl(const QString &pathWithQuery) const {
     const int querySeparator = normalizedPath.indexOf('?');
     if (querySeparator >= 0) {
         url.setPath(normalizedPath.left(querySeparator));
+
         QUrlQuery query;
         query.setQuery(normalizedPath.mid(querySeparator + 1));
         url.setQuery(query);
@@ -81,6 +83,7 @@ QUrl MarketApiClient::apiUrl(const QString &pathWithQuery) const {
         url.setPath(normalizedPath);
         url.setQuery(QString());
     }
+
     return url;
 }
 
@@ -90,11 +93,14 @@ void MarketApiClient::ignoreSslErrorsIfNeeded(QNetworkReply *reply) const {
     }
 
     const QUrl url = reply->url();
-    const bool isLocalhost = url.host() == QStringLiteral("localhost") ||
-                             url.host() == QStringLiteral("127.0.0.1");
+    const bool isLocalhost =
+        url.host() == QStringLiteral("localhost") ||
+        url.host() == QStringLiteral("127.0.0.1");
+
     if (url.scheme() == QStringLiteral("https") && isLocalhost) {
-        QObject::connect(reply, &QNetworkReply::sslErrors, reply,
-                         [reply](const QList<QSslError> &) { reply->ignoreSslErrors(); });
+        QObject::connect(reply, &QNetworkReply::sslErrors, reply, [reply](const QList<QSslError> &) {
+            reply->ignoreSslErrors();
+        });
         reply->ignoreSslErrors();
     }
 }
@@ -105,6 +111,7 @@ void MarketApiClient::getJson(const QUrl &url,
     QNetworkRequest request(url);
     request.setHeader(QNetworkRequest::ContentTypeHeader, QStringLiteral("application/json"));
     request.setRawHeader("Accept", "application/json");
+
     if (!m_userId.isEmpty()) {
         request.setRawHeader("X-User-Id", m_userId.toUtf8());
     }
@@ -114,27 +121,30 @@ void MarketApiClient::getJson(const QUrl &url,
 
     connect(reply, &QNetworkReply::finished, this, [reply, onSuccess, onError]() {
         const QByteArray payload = reply->readAll();
+
         if (reply->error() != QNetworkReply::NoError) {
             if (onError) {
-                const int statusCode =
-                    reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+                const int statusCode = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
                 QString message;
+
                 if (!payload.trimmed().isEmpty()) {
                     message = QStringLiteral("HTTP %1: %2")
-                                  .arg(statusCode > 0 ? QString::number(statusCode)
-                                                      : QStringLiteral("error"))
+                                  .arg(statusCode > 0 ? QString::number(statusCode) : QStringLiteral("error"))
                                   .arg(QString::fromUtf8(payload).trimmed());
                 } else {
                     message = reply->errorString();
                 }
+
                 onError(message);
             }
+
             reply->deleteLater();
             return;
         }
 
         QJsonParseError parseError;
         const QJsonDocument document = QJsonDocument::fromJson(payload, &parseError);
+
         if (parseError.error != QJsonParseError::NoError) {
             if (onError) {
                 onError(QStringLiteral("Invalid JSON from %1: %2")
@@ -147,6 +157,7 @@ void MarketApiClient::getJson(const QUrl &url,
         if (onSuccess) {
             onSuccess(document);
         }
+
         reply->deleteLater();
     });
 }
@@ -203,18 +214,19 @@ void MarketApiClient::fetchMarkets() {
 
                                 auto &market = m_markets[marketIndex];
                                 const QJsonArray outcomesArray = outcomesDocument.array();
-                                const int fallbackPercent =
-                                    fallbackPercentForOutcomeCount(outcomesArray.size());
+                                const int fallbackPercent = fallbackPercentForOutcomeCount(outcomesArray.size());
 
                                 market.outcomes.clear();
                                 market.outcomes.reserve(outcomesArray.size());
 
                                 for (const QJsonValue &outcomeValue : outcomesArray) {
                                     const QJsonObject outcomeObject = outcomeValue.toObject();
+
                                     ApiOutcome outcome;
                                     outcome.id = outcomeObject.value(QStringLiteral("id")).toString();
                                     outcome.title = outcomeObject.value(QStringLiteral("title")).toString();
                                     outcome.pricePercent = fallbackPercent;
+
                                     market.outcomes.push_back(outcome);
                                 }
 
@@ -224,44 +236,47 @@ void MarketApiClient::fetchMarkets() {
                                 }
 
                                 m_pendingMarketRequests += market.outcomes.size();
-                                for (int outcomeIndex = 0; outcomeIndex < market.outcomes.size();
-                                     ++outcomeIndex) {
+
+                                for (int outcomeIndex = 0; outcomeIndex < market.outcomes.size(); ++outcomeIndex) {
                                     const QString outcomeId = market.outcomes[outcomeIndex].id;
-                                    getJson(apiUrl(QStringLiteral("/outcomes/%1/orderbook?depth=1")
-                                                       .arg(outcomeId)),
-                                            [this, marketIndex,
-                                             outcomeIndex](const QJsonDocument &orderBookDocument) {
+
+                                    getJson(apiUrl(QStringLiteral("/outcomes/%1/orderbook?depth=1").arg(outcomeId)),
+                                            [this, marketIndex, outcomeIndex](const QJsonDocument &orderBookDocument) {
                                                 if (orderBookDocument.isObject()) {
                                                     bool hasPrice = false;
-                                                    const int price = bestIndicativePrice(
-                                                        orderBookDocument.object(), &hasPrice);
+                                                    const int price =
+                                                        bestIndicativePrice(orderBookDocument.object(), &hasPrice);
+
                                                     if (hasPrice) {
-                                                        auto &outcome =
-                                                            m_markets[marketIndex].outcomes[outcomeIndex];
+                                                        auto &outcome = m_markets[marketIndex].outcomes[outcomeIndex];
                                                         outcome.pricePercent = price;
                                                         outcome.hasLivePrice = true;
                                                     }
                                                 }
+
                                                 finishPendingMarketRequest();
                                             },
-                                            [this](const QString &) { finishPendingMarketRequest(); });
+                                            [this](const QString &) {
+                                                finishPendingMarketRequest();
+                                            });
                                 }
 
                                 finishPendingMarketRequest();
                             },
-                            [this](const QString &) { finishPendingMarketRequest(); });
+                            [this](const QString &) {
+                                finishPendingMarketRequest();
+                            });
                 }
             },
             [this](const QString &message) {
-                emit marketsError(QStringLiteral("Could not load markets from %1. %2")
+                emit marketsError(QStringLiteral("Could not load markets from %1.\n%2")
                                       .arg(baseUrl(), message));
             });
 }
 
 void MarketApiClient::fetchWallet() {
     if (m_userId.trimmed().isEmpty()) {
-        emit walletError(QStringLiteral(
-            "Set PM_FRONTEND_USER_ID before starting the Qt app to load a wallet."));
+        emit walletError(QStringLiteral("Set PM_FRONTEND_USER_ID before starting the Qt app to load a wallet."));
         return;
     }
 
@@ -273,15 +288,70 @@ void MarketApiClient::fetchWallet() {
                 }
 
                 const QJsonObject object = document.object();
+
                 ApiWallet wallet;
                 wallet.userId = object.value(QStringLiteral("user_id")).toString();
                 wallet.available = object.value(QStringLiteral("available")).toVariant().toLongLong();
                 wallet.reserved = object.value(QStringLiteral("reserved")).toVariant().toLongLong();
                 wallet.updatedAt = object.value(QStringLiteral("updated_at")).toString();
+
                 emit walletReady(wallet);
             },
             [this](const QString &message) {
-                emit walletError(QStringLiteral("Could not load wallet for %1. %2")
+                emit walletError(QStringLiteral("Could not load wallet for %1.\n%2")
+                                     .arg(m_userId, message));
+            });
+}
+
+void MarketApiClient::fetchMyTrades(int limit, int offset) {
+    if (m_userId.trimmed().isEmpty()) {
+        emit tradesError(QStringLiteral("Set PM_FRONTEND_USER_ID before opening Trades."));
+        return;
+    }
+
+    if (limit <= 0) {
+        limit = 50;
+    }
+    if (offset < 0) {
+        offset = 0;
+    }
+
+    getJson(apiUrl(QStringLiteral("/me/trades?limit=%1&offset=%2").arg(limit).arg(offset)),
+            [this](const QJsonDocument &document) {
+                if (!document.isArray()) {
+                    emit tradesError(QStringLiteral("/me/trades did not return an array."));
+                    return;
+                }
+
+                QVector<ApiTrade> trades;
+                const QJsonArray tradesArray = document.array();
+                trades.reserve(tradesArray.size());
+
+                for (const QJsonValue &tradeValue : tradesArray) {
+                    if (!tradeValue.isObject()) {
+                        continue;
+                    }
+
+                    const QJsonObject object = tradeValue.toObject();
+
+                    ApiTrade trade;
+                    trade.id = object.value(QStringLiteral("id")).toString();
+                    trade.outcomeId = object.value(QStringLiteral("outcome_id")).toString();
+                    trade.makerUserId = object.value(QStringLiteral("maker_user_id")).toString();
+                    trade.takerUserId = object.value(QStringLiteral("taker_user_id")).toString();
+                    trade.makerOrderId = object.value(QStringLiteral("maker_order_id")).toString();
+                    trade.takerOrderId = object.value(QStringLiteral("taker_order_id")).toString();
+                    trade.priceBasisPoints = object.value(QStringLiteral("price_bp")).toInt();
+                    trade.quantityMicros = object.value(QStringLiteral("qty_micros")).toVariant().toLongLong();
+                    trade.createdAt = object.value(QStringLiteral("created_at")).toString();
+
+                    trades.push_back(trade);
+                }
+
+                emit tradesReady(trades);
+            },
+            [this](const QString &message) {
+                emit tradesError(QStringLiteral("Could not load trades for %1.\n%2")
                                      .arg(m_userId, message));
             });
 }

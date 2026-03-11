@@ -1,10 +1,12 @@
 #pragma once
 
 #include "../network/MarketApiClient.h"
+
 #include <QMainWindow>
 
 class HeaderBar;
 class MarketsPage;
+class TradesPage;
 class Sidebar;
 class QStackedWidget;
 class ProfilePage;
@@ -25,10 +27,9 @@ private:
     MarketsPage *m_markets = nullptr;
     QWidget *m_portfolioPage = nullptr;
     QWidget *m_ordersPage = nullptr;
-    QWidget *m_tradesPage = nullptr;
+    TradesPage *m_tradesPage = nullptr;
     ProfilePage *m_profile = nullptr;
     QStackedWidget *m_stack = nullptr;
     MarketApiClient *m_api = nullptr;
-
     QString m_profileName = QStringLiteral("Guest");
 };
