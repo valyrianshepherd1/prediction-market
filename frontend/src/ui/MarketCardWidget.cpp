@@ -5,6 +5,7 @@
 #include <QLabel>
 #include <QMouseEvent>
 #include <QVBoxLayout>
+#include <QPushButton>
 
 namespace {
 
@@ -48,16 +49,22 @@ MarketCardWidget::MarketCardWidget(QWidget *parent)
         "font-size: 18px; font-weight: 700; color: white;"));
     root->addWidget(m_question);
 
+    m_meta->setAttribute(Qt::WA_TransparentForMouseEvents);
+    m_question->setAttribute(Qt::WA_TransparentForMouseEvents);
+
     root->addStretch(1);
 
     auto *percentRow = new QHBoxLayout;
     percentRow->setSpacing(12);
 
-    m_yesValue = new QLabel(this);
-    m_noValue = new QLabel(this);
+    m_yesValue = new QPushButton(this);
+    m_noValue = new QPushButton(this);
 
-    m_yesValue->setAlignment(Qt::AlignCenter);
-    m_noValue->setAlignment(Qt::AlignCenter);
+    m_yesValue->setCursor(Qt::PointingHandCursor);
+    m_noValue->setCursor(Qt::PointingHandCursor);
+
+    m_yesValue->setFlat(true);
+    m_noValue->setFlat(true);
 
     m_yesValue->setStyleSheet(QStringLiteral(
         "color: #7ef0a8; background: #123222; border: 1px solid #1f7a45; "
@@ -71,6 +78,15 @@ MarketCardWidget::MarketCardWidget(QWidget *parent)
     percentRow->addWidget(m_noValue);
 
     root->addLayout(percentRow);
+
+    connect(m_yesValue, &QPushButton::clicked, this, [this]() {
+        emit openRequested(QStringLiteral("YES"));
+    });
+
+    connect(m_noValue, &QPushButton::clicked, this, [this]() {
+        emit openRequested(QStringLiteral("NO"));
+    });
+
 }
 
 bool MarketCardWidget::isBinaryYesNoMarket(const ApiMarket &market) const {
@@ -136,6 +152,8 @@ void MarketCardWidget::setMarket(const ApiMarket &market) {
 }
 
 void MarketCardWidget::mousePressEvent(QMouseEvent *event) {
-    emit openRequested();
+    if (event->button() == Qt::LeftButton) {
+        emit openRequested(QString());
+    }
     QFrame::mousePressEvent(event);
 }

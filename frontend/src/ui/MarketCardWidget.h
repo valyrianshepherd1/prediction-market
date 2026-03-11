@@ -5,6 +5,7 @@
 #include <QFrame>
 
 class QLabel;
+class QPushButton;
 class QMouseEvent;
 
 class MarketCardWidget : public QFrame {
@@ -15,7 +16,7 @@ public:
     void setMarket(const ApiMarket &market);
 
     signals:
-        void openRequested();
+        void openRequested(const QString &preferredSelection);
 
 protected:
     void mousePressEvent(QMouseEvent *event) override;
@@ -26,6 +27,6 @@ private:
 
     QLabel *m_meta = nullptr;
     QLabel *m_question = nullptr;
-    QLabel *m_yesValue = nullptr;
-    QLabel *m_noValue = nullptr;
+    QPushButton *m_yesValue = nullptr;
+    QPushButton *m_noValue = nullptr;
 };
