@@ -313,15 +313,21 @@ void OrderRepository::getOrderBook(const std::string &outcomeId,
         "ORDER BY price_bp ASC, created_at, id "
         "LIMIT $2::int";
 
-    db_->execSqlAsync(std::string(kSelectBuy),
-        [this, ctx, outcomeId, depth](const Result &r) {
-            ctx->book.buy.reserve(r.size());
-            for (std::size_t i = 0; i < r.size(); ++i) ctx->book.buy.push_back(rowToOrder(r, i));
+    auto db = db_;
 
-            db_->execSqlAsync(std::string(kSelectSell),
+    db->execSqlAsync(std::string(kSelectBuy),
+        [db, ctx, outcomeId, depth](const Result &r) {
+            ctx->book.buy.reserve(r.size());
+            for (std::size_t i = 0; i < r.size(); ++i) {
+                ctx->book.buy.push_back(rowToOrder(r, i));
+            }
+
+            db->execSqlAsync(std::string(kSelectSell),
                 [ctx](const Result &r2) {
                     ctx->book.sell.reserve(r2.size());
-                    for (std::size_t i = 0; i < r2.size(); ++i) ctx->book.sell.push_back(rowToOrder(r2, i));
+                    for (std::size_t i = 0; i < r2.size(); ++i) {
+                        ctx->book.sell.push_back(rowToOrder(r2, i));
+                    }
                     ctx->onOk(std::move(ctx->book));
                 },
                 ctx->onErr,

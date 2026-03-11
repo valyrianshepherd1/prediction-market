@@ -1,6 +1,7 @@
 #include "pm/ws/RealtimePublisher.h"
 
 #include "pm/repositories/WalletRepository.h"
+#include "pm/util/JsonSerializers.h"
 #include "pm/ws/WsHub.h"
 
 #include <drogon/orm/DbClient.h>
@@ -17,44 +18,6 @@ using drogon::orm::DrogonDbException;
 using drogon::orm::Result;
 
 namespace {
-Json::Value orderToJson(const OrderRow &o) {
-    Json::Value j;
-    j["id"] = o.id;
-    j["user_id"] = o.user_id;
-    j["outcome_id"] = o.outcome_id;
-    j["side"] = o.side;
-    j["price_bp"] = o.price_bp;
-    j["qty_total_micros"] = Json::Int64(o.qty_total_micros);
-    j["qty_remaining_micros"] = Json::Int64(o.qty_remaining_micros);
-    j["status"] = o.status;
-    j["created_at"] = o.created_at;
-    j["updated_at"] = o.updated_at;
-    return j;
-}
-
-Json::Value tradeToJson(const TradeRow &t) {
-    Json::Value j;
-    j["id"] = t.id;
-    j["outcome_id"] = t.outcome_id;
-    j["maker_user_id"] = t.maker_user_id;
-    j["taker_user_id"] = t.taker_user_id;
-    j["maker_order_id"] = t.maker_order_id;
-    j["taker_order_id"] = t.taker_order_id;
-    j["price_bp"] = t.price_bp;
-    j["qty_micros"] = Json::Int64(t.qty_micros);
-    j["created_at"] = t.created_at;
-    return j;
-}
-
-Json::Value walletToJson(const WalletRow &w) {
-    Json::Value j;
-    j["user_id"] = w.user_id;
-    j["available"] = Json::Int64(w.available);
-    j["reserved"] = Json::Int64(w.reserved);
-    j["updated_at"] = w.updated_at;
-    return j;
-}
-
 OrderRow rowToOrder(const Result &r, std::size_t i) {
     OrderRow o;
     o.id = r[i]["id"].as<std::string>();
@@ -83,7 +46,7 @@ void publishOrderbookInvalidate(const OrderRow &order, std::string_view reason) 
 }
 
 void publishOrderChanged(const OrderRow &order, std::string_view reason) {
-    Json::Value payload = orderToJson(order);
+    Json::Value payload = pm::json::toJson(order);
     payload["reason"] = std::string(reason);
 
     pm::ws::WsHub::instance().publish(
@@ -170,7 +133,7 @@ void publishPrivateTradeEvent(const TradeRow &trade,
         return;
     }
 
-    Json::Value payload = tradeToJson(trade);
+    Json::Value payload = pm::json::toJson(trade);
     payload["role"] = std::string(role);
     payload["counterparty_user_id"] = counterpartyUserId;
 
@@ -198,7 +161,7 @@ void publishWalletSnapshot(const DbClientPtr &db,
             WsHub::instance().publish(
                 "user:" + userId,
                 "user.wallet.updated",
-                walletToJson(*wallet));
+                pm::json::toJson(*wallet));
         },
         [](const DrogonDbException &) {
             // best effort: realtime notification failure must not break request flow
@@ -227,7 +190,7 @@ void publishTradeExecution(const DbClientPtr &db,
     WsHub::instance().publish(
         "trades:" + trade.outcome_id,
         "trade.created",
-        tradeToJson(trade));
+        pm::json::toJson(trade));
 
     publishPrivateTradeEvent(trade, trade.maker_user_id, "maker", trade.taker_user_id);
     if (trade.taker_user_id != trade.maker_user_id) {

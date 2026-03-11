@@ -1,8 +1,11 @@
 #include "pm/ws/WsHub.h"
 
+#include "pm/ws/WsEnvelope.h"
+
 #include <algorithm>
 #include <cctype>
 #include <utility>
+#include <vector>
 
 namespace pm::ws {
     namespace {
@@ -99,6 +102,34 @@ namespace pm::ws {
         return {it->second.topics.begin(), it->second.topics.end()};
     }
 
+    bool WsHub::resolveTopic(const drogon::WebSocketConnectionPtr &connection,
+                             const std::string &topic,
+                             std::string &normalizedTopic,
+                             std::string &error) const {
+        std::scoped_lock lock(mutex_);
+
+        const auto it = connections_.find(makeKey(connection));
+        if (it == connections_.end()) {
+            error = "connection is not registered";
+            normalizedTopic.clear();
+            return false;
+        }
+
+        normalizedTopic = normalizeTopic(topic, it->second.principal);
+        return isAllowedTopic(normalizedTopic, it->second.principal, error);
+    }
+
+    std::uint64_t WsHub::currentTopicSeq(const std::string &topic) const {
+        std::scoped_lock lock(mutex_);
+        const auto normalizedTopic = normalizeTopic(topic, std::nullopt);
+        if (normalizedTopic.empty()) {
+            return 0;
+        }
+
+        const auto it = topic_seq_.find(normalizedTopic);
+        return it == topic_seq_.end() ? 0 : it->second;
+    }
+
     void WsHub::publish(const std::string &topic,
                         const std::string &event,
                         const Json::Value &payload) {
@@ -109,33 +140,34 @@ namespace pm::ws {
 
         std::vector<drogon::WebSocketConnectionPtr> recipients;
         std::vector<ConnectionKey> staleKeys;
+        std::uint64_t seq = 0;
 
         {
             std::scoped_lock lock(mutex_);
+            seq = ++topic_seq_[normalizedTopic];
+
             auto topicIt = topic_index_.find(normalizedTopic);
-            if (topicIt == topic_index_.end()) {
-                return;
-            }
+            if (topicIt != topic_index_.end()) {
+                for (auto it = topicIt->second.begin(); it != topicIt->second.end();) {
+                    auto connIt = connections_.find(*it);
+                    if (connIt == connections_.end()) {
+                        staleKeys.push_back(*it);
+                        it = topicIt->second.erase(it);
+                        continue;
+                    }
 
-            for (auto it = topicIt->second.begin(); it != topicIt->second.end();) {
-                auto connIt = connections_.find(*it);
-                if (connIt == connections_.end()) {
-                    staleKeys.push_back(*it);
-                    it = topicIt->second.erase(it);
-                    continue;
+                    if (auto connection = connIt->second.connection.lock()) {
+                        recipients.push_back(std::move(connection));
+                        ++it;
+                    } else {
+                        staleKeys.push_back(*it);
+                        it = topicIt->second.erase(it);
+                    }
                 }
 
-                if (auto connection = connIt->second.connection.lock()) {
-                    recipients.push_back(std::move(connection));
-                    ++it;
-                } else {
-                    staleKeys.push_back(*it);
-                    it = topicIt->second.erase(it);
+                if (topicIt->second.empty()) {
+                    topic_index_.erase(topicIt);
                 }
-            }
-
-            if (topicIt->second.empty()) {
-                topic_index_.erase(topicIt);
             }
 
             for (const auto key: staleKeys) {
@@ -147,11 +179,12 @@ namespace pm::ws {
             return;
         }
 
-        Json::Value envelope;
-        envelope["event"] = event;
-        envelope["topic"] = normalizedTopic;
-        envelope["payload"] = payload;
-        const auto json = toJsonString(envelope);
+        const auto envelope = makeEnvelope(
+            event,
+            payload,
+            normalizedTopic,
+            makeMeta(seq));
+        const auto json = stringifyJson(envelope);
 
         for (const auto &connection: recipients) {
             if (connection && connection->connected()) {
@@ -226,12 +259,6 @@ namespace pm::ws {
 
         error = "unknown topic; expected orderbook:<outcome_id>, trades:<outcome_id>, user:<user_id|me>";
         return false;
-    }
-
-    std::string WsHub::toJsonString(const Json::Value &value) {
-        Json::StreamWriterBuilder builder;
-        builder["indentation"] = "";
-        return Json::writeString(builder, value);
     }
 
     void WsHub::forgetConnectionLocked(ConnectionKey key) {

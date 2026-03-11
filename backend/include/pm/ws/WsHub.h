@@ -6,6 +6,7 @@
 
 #include <json/json.h>
 
+#include <cstdint>
 #include <mutex>
 #include <optional>
 #include <string>
@@ -32,6 +33,13 @@ namespace pm::ws {
 
         std::vector<std::string> subscriptions(const drogon::WebSocketConnectionPtr &connection) const;
 
+        bool resolveTopic(const drogon::WebSocketConnectionPtr &connection,
+                          const std::string &topic,
+                          std::string &normalizedTopic,
+                          std::string &error) const;
+
+        [[nodiscard]] std::uint64_t currentTopicSeq(const std::string &topic) const;
+
         void publish(const std::string &topic,
                      const std::string &event,
                      const Json::Value &payload);
@@ -52,12 +60,11 @@ namespace pm::ws {
                                    const std::optional<pm::auth::Principal> &principal,
                                    std::string &error);
 
-        static std::string toJsonString(const Json::Value &value);
-
         void forgetConnectionLocked(ConnectionKey key);
 
         mutable std::mutex mutex_;
         std::unordered_map<ConnectionKey, ConnectionState> connections_;
         std::unordered_map<std::string, std::unordered_set<ConnectionKey>> topic_index_;
+        std::unordered_map<std::string, std::uint64_t> topic_seq_;
     };
 } // namespace pm::ws

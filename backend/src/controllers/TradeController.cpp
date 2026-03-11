@@ -3,6 +3,7 @@
 #include "pm/repositories/TradeRepository.h"
 #include "pm/util/ApiError.h"
 #include "pm/util/AuthGuard.h"
+#include "pm/util/JsonSerializers.h"
 
 #include <drogon/drogon.h>
 
@@ -30,21 +31,6 @@ bool parseInt(std::string_view s, int &out) {
     out = v;
     return true;
 }
-
-Json::Value tradeToJson(const TradeRow &t) {
-    Json::Value j;
-    j["id"] = t.id;
-    j["outcome_id"] = t.outcome_id;
-    j["maker_user_id"] = t.maker_user_id;
-    j["taker_user_id"] = t.taker_user_id;
-    j["maker_order_id"] = t.maker_order_id;
-    j["taker_order_id"] = t.taker_order_id;
-    j["price_bp"] = t.price_bp;
-    j["qty_micros"] = Json::Int64(t.qty_micros);
-    j["created_at"] = t.created_at;
-    return j;
-}
-
 } // namespace
 
 void TradeController::listByOutcome(const drogon::HttpRequestPtr &req,
@@ -64,7 +50,7 @@ void TradeController::listByOutcome(const drogon::HttpRequestPtr &req,
     repo.listByOutcome(outcomeId, limit, offset,
         [cbp](std::vector<TradeRow> rows) {
             Json::Value arr(Json::arrayValue);
-            for (const auto &r : rows) arr.append(tradeToJson(r));
+            for (const auto &r : rows) arr.append(pm::json::toJson(r));
             auto resp = HttpResponse::newHttpJsonResponse(arr);
             resp->setStatusCode(drogon::k200OK);
             (*cbp)(resp);
@@ -93,7 +79,7 @@ void TradeController::listMyTrades(const drogon::HttpRequestPtr &req,
             repo.listByUser(principal.user_id, limit, offset,
                 [cbp](std::vector<TradeRow> rows) {
                     Json::Value arr(Json::arrayValue);
-                    for (const auto &r : rows) arr.append(tradeToJson(r));
+                    for (const auto &r : rows) arr.append(pm::json::toJson(r));
                     auto resp = HttpResponse::newHttpJsonResponse(arr);
                     resp->setStatusCode(drogon::k200OK);
                     (*cbp)(resp);

@@ -4,6 +4,7 @@
 #include "pm/services/WalletService.h"
 #include "pm/util/ApiError.h"
 #include "pm/util/AuthGuard.h"
+#include "pm/util/JsonSerializers.h"
 #include "pm/ws/RealtimePublisher.h"
 
 #include <cstdlib>
@@ -27,16 +28,6 @@ drogon::orm::DbClientPtr getDbOrNull(std::string &err) {
         return nullptr;
     }
 }
-
-Json::Value walletToJson(const WalletRow &w) {
-    Json::Value j;
-    j["user_id"] = w.user_id;
-    j["available"] = Json::Int64(w.available);
-    j["reserved"] = Json::Int64(w.reserved);
-    j["updated_at"] = w.updated_at;
-    return j;
-}
-
 }  // namespace
 
 bool WalletController::isAdmin(const drogon::HttpRequestPtr &) {
@@ -70,7 +61,7 @@ void WalletController::getMyWallet(
                         return (*cbp)(pm::jsonError(
                             {drogon::k404NotFound, "wallet not found"}));
                     }
-                    auto resp = HttpResponse::newHttpJsonResponse(walletToJson(*w));
+                    auto resp = HttpResponse::newHttpJsonResponse(pm::json::toJson(*w));
                     resp->setStatusCode(drogon::k200OK);
                     (*cbp)(resp);
                 },
@@ -109,7 +100,7 @@ void WalletController::getWallet(
                         return (*cbp)(pm::jsonError(
                             {drogon::k404NotFound, "wallet not found"}));
                     }
-                    auto resp = HttpResponse::newHttpJsonResponse(walletToJson(*w));
+                    auto resp = HttpResponse::newHttpJsonResponse(pm::json::toJson(*w));
                     resp->setStatusCode(drogon::k200OK);
                     (*cbp)(resp);
                 },
@@ -159,7 +150,7 @@ void WalletController::adminDeposit(
                 [cbp, db](WalletRow w) {
                     pm::ws::publishWalletSnapshot(db, w.user_id);
 
-                    auto resp = HttpResponse::newHttpJsonResponse(walletToJson(w));
+                    auto resp = HttpResponse::newHttpJsonResponse(pm::json::toJson(w));
                     resp->setStatusCode(drogon::k200OK);
                     (*cbp)(resp);
                 },

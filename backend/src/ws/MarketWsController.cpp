@@ -2,8 +2,11 @@
 
 #include "pm/util/ApiError.h"
 #include "pm/util/AuthGuard.h"
+#include "pm/ws/TopicSnapshotPublisher.h"
+#include "pm/ws/WsEnvelope.h"
 #include "pm/ws/WsHub.h"
 
+#include <drogon/drogon.h>
 #include <json/json.h>
 
 #include <array>
@@ -15,23 +18,16 @@
 namespace {
     constexpr std::size_t kMaxClientMessageSize = 4096;
 
-    std::string toJsonString(const Json::Value &value) {
-        Json::StreamWriterBuilder builder;
-        builder["indentation"] = "";
-        return Json::writeString(builder, value);
-    }
-
     void sendSystemEvent(const drogon::WebSocketConnectionPtr &connection,
                          const std::string &event,
                          const Json::Value &payload = Json::Value(Json::objectValue),
                          const std::string &topic = {}) {
-        Json::Value envelope;
-        envelope["event"] = event;
-        if (!topic.empty()) {
-            envelope["topic"] = topic;
+        if (!connection || !connection->connected()) {
+            return;
         }
-        envelope["payload"] = payload;
-        connection->send(toJsonString(envelope));
+
+        connection->send(pm::ws::stringifyJson(
+            pm::ws::makeEnvelope(event, payload, topic, pm::ws::makeMeta())));
     }
 
     Json::Value subscriptionsPayload(const drogon::WebSocketConnectionPtr &connection) {
@@ -61,6 +57,15 @@ namespace {
 
         return root;
     }
+
+    drogon::orm::DbClientPtr getDbOrNull(std::string &err) {
+        try {
+            return drogon::app().getDbClient("default");
+        } catch (const std::exception &e) {
+            err = e.what();
+            return nullptr;
+        }
+    }
 } // namespace
 
 void MarketWsController::handleNewConnection(const drogon::HttpRequestPtr &request,
@@ -70,13 +75,19 @@ void MarketWsController::handleNewConnection(const drogon::HttpRequestPtr &reque
     Json::Value welcomePayload;
     welcomePayload["message"] = "websocket connected";
     welcomePayload["actions"] = Json::arrayValue;
-    for (const auto action: std::array{"subscribe", "unsubscribe", "list_topics", "ping"}) {
+    for (const auto action: std::array{"subscribe", "unsubscribe", "list_topics", "ping", "snapshot"}) {
         welcomePayload["actions"].append(action);
     }
     welcomePayload["topics"] = Json::arrayValue;
     welcomePayload["topics"].append("orderbook:<outcome_id>");
     welcomePayload["topics"].append("trades:<outcome_id>");
     welcomePayload["topics"].append("user:<user_id|me>");
+    welcomePayload["subscribe_options"] = Json::objectValue;
+    welcomePayload["subscribe_options"]["with_snapshot"] = true;
+    welcomePayload["message_meta"] = Json::objectValue;
+    welcomePayload["message_meta"]["server_time_ms"] = "always";
+    welcomePayload["message_meta"]["seq"] = "for topic events and snapshots";
+    welcomePayload["message_meta"]["snapshot"] = "true for snapshot envelopes";
     welcomePayload["max_message_size"] = static_cast<Json::UInt64>(kMaxClientMessageSize);
     sendSystemEvent(connection, "system.welcome", welcomePayload);
 
@@ -171,6 +182,50 @@ void MarketWsController::handleNewMessage(const drogon::WebSocketConnectionPtr &
         }
 
         sendSystemEvent(connection, "system.subscribed", subscriptionsPayload(connection), topic);
+
+        if ((*root).get("with_snapshot", false).asBool()) {
+            std::string normalizedTopic;
+            if (!pm::ws::WsHub::instance().resolveTopic(connection, topic, normalizedTopic, error)) {
+                Json::Value payload;
+                payload["message"] = error;
+                sendSystemEvent(connection, "system.error", payload, topic);
+                return;
+            }
+
+            std::string dbErr;
+            auto db = getDbOrNull(dbErr);
+            if (!db) {
+                Json::Value payload;
+                payload["message"] = dbErr;
+                sendSystemEvent(connection, "system.error", payload, normalizedTopic);
+                return;
+            }
+
+            pm::ws::sendTopicSnapshot(connection, db, normalizedTopic, *root);
+        }
+        return;
+    }
+
+    if (action == "snapshot") {
+        std::string normalizedTopic;
+        std::string error;
+        if (!pm::ws::WsHub::instance().resolveTopic(connection, topic, normalizedTopic, error)) {
+            Json::Value payload;
+            payload["message"] = error;
+            sendSystemEvent(connection, "system.error", payload, topic);
+            return;
+        }
+
+        std::string dbErr;
+        auto db = getDbOrNull(dbErr);
+        if (!db) {
+            Json::Value payload;
+            payload["message"] = dbErr;
+            sendSystemEvent(connection, "system.error", payload, normalizedTopic);
+            return;
+        }
+
+        pm::ws::sendTopicSnapshot(connection, db, normalizedTopic, *root);
         return;
     }
 
