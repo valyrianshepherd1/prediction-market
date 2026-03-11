@@ -4,6 +4,7 @@
 #include "pm/services/WalletService.h"
 #include "pm/util/ApiError.h"
 #include "pm/util/AuthGuard.h"
+#include "pm/ws/RealtimePublisher.h"
 
 #include <cstdlib>
 #include <memory>
@@ -155,7 +156,9 @@ void WalletController::adminDeposit(
             svc.deposit(
                 userId,
                 amount,
-                [cbp](WalletRow w) {
+                [cbp, db](WalletRow w) {
+                    pm::ws::publishWalletSnapshot(db, w.user_id);
+
                     auto resp = HttpResponse::newHttpJsonResponse(walletToJson(w));
                     resp->setStatusCode(drogon::k200OK);
                     (*cbp)(resp);
