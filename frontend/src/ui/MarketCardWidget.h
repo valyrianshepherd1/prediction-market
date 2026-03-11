@@ -1,27 +1,37 @@
 #pragma once
+
+#include "../network/MarketApiClient.h"
+
 #include <QFrame>
-#include <QString>
 #include <QVector>
 
-struct OutcomeView {
-    QString name;
-    int percent;
-};
-
 class QLabel;
-class QProgressBar;
+class QPushButton;
+class QVBoxLayout;
+class QWidget;
 
 class MarketCardWidget : public QFrame {
     Q_OBJECT
 public:
     explicit MarketCardWidget(QWidget *parent = nullptr);
 
-    void setMarket(const QString &question,
-                   const QVector<OutcomeView> &outcomes,
-                   const QString &volumeText = QString());
+    void setMarket(const ApiMarket &market);
+
+    signals:
+        void yesClicked();
+    void noClicked();
 
 private:
+    void clearVariantRows();
+    void addVariantPreview(const ApiOutcome &outcome);
+    QString metaText(const ApiMarket &market) const;
+    QString noTextFor(int yesPercent) const;
+
     QLabel *m_question = nullptr;
-    QLabel *m_volume = nullptr;
-    QWidget *m_outcomesContainer = nullptr;
+    QLabel *m_meta = nullptr;
+    QWidget *m_variantsContainer = nullptr;
+    QVBoxLayout *m_variantsLayout = nullptr;
+    QLabel *m_moreLabel = nullptr;
+    QPushButton *m_yesButton = nullptr;
+    QPushButton *m_noButton = nullptr;
 };

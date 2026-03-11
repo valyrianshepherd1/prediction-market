@@ -2,9 +2,12 @@
 
 #include "../ui/HeaderBar.h"
 #include "../ui/Sidebar.h"
+#include "../ui/dialogs/AuthDialog.h"
+#include "../ui/pages/AuthRequiredPage.h"
 #include "../ui/pages/MarketsPage.h"
 #include "../ui/pages/ProfilePage.h"
 #include "../ui/pages/TradesPage.h"
+#include "../ui/pages/MarketDetailsPage.h"
 
 #include <QApplication>
 #include <QHBoxLayout>
@@ -50,14 +53,6 @@ QString darkStyle() {
     )";
 }
 
-QString profileNameFromEnvironment() {
-    const QString configured = qEnvironmentVariable("PM_FRONTEND_USER_NAME");
-    if (!configured.trimmed().isEmpty()) {
-        return configured;
-    }
-    return QStringLiteral("Guest");
-}
-
 QString initialsFromName(const QString &name) {
     const QString trimmed = name.trimmed();
     if (trimmed.isEmpty()) {
@@ -76,7 +71,9 @@ QString formatUnits(qint64 value) {
     return QLocale().toString(value);
 }
 
-QWidget *createPlaceholderPage(const QString &title, const QString &text, QWidget *parent = nullptr) {
+QWidget *createPlaceholderPage(const QString &title,
+                               const QString &text,
+                               QWidget *parent = nullptr) {
     auto *page = new QWidget(parent);
     page->setObjectName(QStringLiteral("CenterPage"));
 
@@ -96,6 +93,14 @@ QWidget *createPlaceholderPage(const QString &title, const QString &text, QWidge
     layout->addStretch(1);
 
     return page;
+}
+
+QStackedWidget *createProtectedStack(QWidget *gate, QWidget *content, QWidget *parent = nullptr) {
+    auto *stack = new QStackedWidget(parent);
+    stack->addWidget(gate);
+    stack->addWidget(content);
+    stack->setCurrentIndex(0);
+    return stack;
 }
 
 } // namespace
@@ -127,6 +132,9 @@ MarketWindow::MarketWindow(QWidget *parent)
     m_sidebar = new Sidebar(this);
     m_sidebar->setFixedWidth(220);
 
+    m_marketDetailsPage = new MarketDetailsPage(this);
+    m_marketDetailsPage->setObjectName(QStringLiteral("CenterPage"));
+
     m_header = new HeaderBar(this);
     m_markets = new MarketsPage(this);
     m_profile = new ProfilePage(this);
@@ -135,25 +143,46 @@ MarketWindow::MarketWindow(QWidget *parent)
 
     m_portfolioPage = createPlaceholderPage(
         QStringLiteral("Portfolio"),
-        QStringLiteral("This page will show the user portfolio, positions and exposure."),
+        QStringLiteral("This page will show your portfolio, positions and exposure."),
         this);
 
     m_ordersPage = createPlaceholderPage(
         QStringLiteral("Orders"),
-        QStringLiteral("This page will show active, filled and cancelled orders."),
+        QStringLiteral("This page will show your active, filled and cancelled orders."),
+        this);
+
+    m_portfolioGate = new AuthRequiredPage(
+    QStringLiteral("View your portfolio"),
+    this);
+
+    m_ordersGate = new AuthRequiredPage(
+        QStringLiteral("View your orders"),
+        this);
+
+    m_tradesGate = new AuthRequiredPage(
+        QStringLiteral("View your trades"),
+        this);
+
+    m_profileGate = new AuthRequiredPage(
+        QStringLiteral("View your profile"),
         this);
 
     m_markets->setObjectName(QStringLiteral("CenterPage"));
     m_profile->setObjectName(QStringLiteral("CenterPage"));
     m_tradesPage->setObjectName(QStringLiteral("CenterPage"));
-    m_tradesPage->setCurrentUserId(m_api->configuredUserId());
+
+    m_portfolioStack = createProtectedStack(m_portfolioGate, m_portfolioPage, this);
+    m_ordersStack = createProtectedStack(m_ordersGate, m_ordersPage, this);
+    m_tradesStack = createProtectedStack(m_tradesGate, m_tradesPage, this);
+    m_profileStack = createProtectedStack(m_profileGate, m_profile, this);
 
     m_stack = new QStackedWidget(this);
     m_stack->addWidget(m_markets);
-    m_stack->addWidget(m_portfolioPage);
-    m_stack->addWidget(m_ordersPage);
-    m_stack->addWidget(m_tradesPage);
-    m_stack->addWidget(m_profile);
+    m_stack->addWidget(m_portfolioStack);
+    m_stack->addWidget(m_ordersStack);
+    m_stack->addWidget(m_tradesStack);
+    m_stack->addWidget(m_profileStack);
+    m_stack->addWidget(m_marketDetailsPage);
 
     rightLayout->addWidget(m_header);
     rightLayout->addWidget(m_stack, 1);
@@ -166,7 +195,6 @@ MarketWindow::MarketWindow(QWidget *parent)
 
     qApp->setStyleSheet(darkStyle());
 
-    m_profileName = profileNameFromEnvironment();
     m_profile->setUserName(m_profileName);
     m_header->setAvatarText(initialsFromName(m_profileName));
     m_header->setBalanceText(QStringLiteral("Balance: —"));
@@ -178,6 +206,28 @@ MarketWindow::MarketWindow(QWidget *parent)
     connect(m_profile, &ProfilePage::backRequested, this, [this]() {
         showSection(QStringLiteral("markets"));
     });
+    connect(m_profile, &ProfilePage::logoutRequested, m_api, &MarketApiClient::logout);
+
+    connect(m_markets, &MarketsPage::marketRequested, this,
+        [this](const ApiMarket &market, const QString &preferredSide) {
+            m_marketDetailsPage->setMarket(market, preferredSide);
+            m_stack->setCurrentWidget(m_marketDetailsPage);
+            m_header->setTitle(QStringLiteral("Market"));
+            m_sidebar->setCurrentPage(QStringLiteral("markets"));
+        });
+
+    connect(m_marketDetailsPage, &MarketDetailsPage::backRequested, this, [this]() {
+        showSection(QStringLiteral("markets"));
+    });
+
+    connect(m_portfolioGate, &AuthRequiredPage::loginRequested, this, &MarketWindow::openLoginDialog);
+    connect(m_portfolioGate, &AuthRequiredPage::signUpRequested, this, &MarketWindow::openSignUpDialog);
+    connect(m_ordersGate, &AuthRequiredPage::loginRequested, this, &MarketWindow::openLoginDialog);
+    connect(m_ordersGate, &AuthRequiredPage::signUpRequested, this, &MarketWindow::openSignUpDialog);
+    connect(m_tradesGate, &AuthRequiredPage::loginRequested, this, &MarketWindow::openLoginDialog);
+    connect(m_tradesGate, &AuthRequiredPage::signUpRequested, this, &MarketWindow::openSignUpDialog);
+    connect(m_profileGate, &AuthRequiredPage::loginRequested, this, &MarketWindow::openLoginDialog);
+    connect(m_profileGate, &AuthRequiredPage::signUpRequested, this, &MarketWindow::openSignUpDialog);
 
     connect(m_api, &MarketApiClient::marketsReady, m_markets, &MarketsPage::setMarkets);
     connect(m_api, &MarketApiClient::marketsError, m_markets, &MarketsPage::setError);
@@ -186,18 +236,37 @@ MarketWindow::MarketWindow(QWidget *parent)
     connect(m_api, &MarketApiClient::tradesReady, m_tradesPage, &TradesPage::setTrades);
     connect(m_api, &MarketApiClient::tradesError, m_tradesPage, &TradesPage::setError);
 
+    connect(m_api, &MarketApiClient::sessionReady, this, &MarketWindow::onSessionReady);
+    connect(m_api, &MarketApiClient::sessionCleared, this, &MarketWindow::onSessionCleared);
+    connect(m_api, &MarketApiClient::authError, this, &MarketWindow::onAuthError);
+
+    setProtectedPagesAuthenticated(false);
+
     m_sidebar->setStatusText(QStringLiteral("Status: loading markets..."));
     m_markets->setLoading(QStringLiteral("Loading markets from %1…").arg(m_api->baseUrl()));
     m_api->fetchMarkets();
 
-    if (!m_api->configuredUserId().trimmed().isEmpty()) {
-        m_profile->setStatusMessage(QStringLiteral("Loading wallet from %1…").arg(m_api->baseUrl()));
-        m_api->fetchWallet();
-    } else {
-        m_profile->setStatusMessage(QStringLiteral("Set PM_FRONTEND_USER_ID to load a real wallet."));
-    }
+    m_sidebar->setStatusText(QStringLiteral("Status: restoring session..."));
+    m_api->restoreSession();
 
     showSection(QStringLiteral("markets"));
+}
+
+void MarketWindow::setProtectedPagesAuthenticated(bool authenticated) {
+    const int index = authenticated ? 1 : 0;
+
+    if (m_portfolioStack) {
+        m_portfolioStack->setCurrentIndex(index);
+    }
+    if (m_ordersStack) {
+        m_ordersStack->setCurrentIndex(index);
+    }
+    if (m_tradesStack) {
+        m_tradesStack->setCurrentIndex(index);
+    }
+    if (m_profileStack) {
+        m_profileStack->setCurrentIndex(index);
+    }
 }
 
 void MarketWindow::showSection(const QString &pageId) {
@@ -205,28 +274,25 @@ void MarketWindow::showSection(const QString &pageId) {
         m_stack->setCurrentWidget(m_markets);
         m_header->setTitle(QStringLiteral("Markets"));
     } else if (pageId == QStringLiteral("portfolio")) {
-        m_stack->setCurrentWidget(m_portfolioPage);
+        m_stack->setCurrentWidget(m_portfolioStack);
         m_header->setTitle(QStringLiteral("Portfolio"));
     } else if (pageId == QStringLiteral("orders")) {
-        m_stack->setCurrentWidget(m_ordersPage);
+        m_stack->setCurrentWidget(m_ordersStack);
         m_header->setTitle(QStringLiteral("Orders"));
     } else if (pageId == QStringLiteral("trades")) {
-        m_stack->setCurrentWidget(m_tradesPage);
+        m_stack->setCurrentWidget(m_tradesStack);
         m_header->setTitle(QStringLiteral("Trades"));
 
-        m_tradesPage->setCurrentUserId(m_api->configuredUserId());
-
-        if (!m_api->configuredUserId().trimmed().isEmpty()) {
-            m_tradesPage->setLoading(QStringLiteral("Loading trades from %1…").arg(m_api->baseUrl()));
+        if (m_api->isAuthenticated()) {
+            m_tradesPage->setCurrentUserId(m_api->currentSession().userId);
+            m_tradesPage->setLoading(QStringLiteral("Loading your trades..."));
             m_api->fetchMyTrades();
-        } else {
-            m_tradesPage->setError(QStringLiteral("Set PM_FRONTEND_USER_ID before opening Trades."));
         }
     } else if (pageId == QStringLiteral("profile")) {
-        m_stack->setCurrentWidget(m_profile);
+        m_stack->setCurrentWidget(m_profileStack);
         m_header->setTitle(QStringLiteral("Profile"));
 
-        if (!m_api->configuredUserId().trimmed().isEmpty()) {
+        if (m_api->isAuthenticated()) {
             m_profile->setStatusMessage(QStringLiteral("Refreshing wallet..."));
             m_api->fetchWallet();
         }
@@ -237,9 +303,7 @@ void MarketWindow::showSection(const QString &pageId) {
 
 void MarketWindow::onWalletLoaded(const ApiWallet &wallet) {
     const QString displayName =
-        m_profileName == QStringLiteral("Guest") && !wallet.userId.isEmpty()
-            ? wallet.userId
-            : m_profileName;
+        m_profileName.trimmed().isEmpty() ? wallet.userId : m_profileName;
 
     m_profile->setUserName(displayName);
     m_profile->setWalletAmounts(wallet.available, wallet.reserved);
@@ -254,6 +318,88 @@ void MarketWindow::onWalletLoaded(const ApiWallet &wallet) {
 }
 
 void MarketWindow::onWalletError(const QString &message) {
+    if (!m_api->isAuthenticated()) {
+        return;
+    }
+
     m_profile->setStatusMessage(message, true);
     m_sidebar->setStatusText(QStringLiteral("Status: wallet unavailable"));
+}
+
+void MarketWindow::onSessionReady(const ApiSession &session) {
+    m_profileName = session.username.trimmed().isEmpty() ? session.email : session.username;
+
+    m_profile->setUserName(m_profileName.isEmpty() ? QStringLiteral("User") : m_profileName);
+    m_profile->setEmail(session.email);
+    m_profile->setWalletAmounts(0, 0);
+    m_profile->setStatusMessage(QStringLiteral("Authenticated. Loading wallet..."));
+
+    m_tradesPage->setCurrentUserId(session.userId);
+
+    m_header->setAvatarText(initialsFromName(m_profileName.isEmpty() ? QStringLiteral("User") : m_profileName));
+    m_header->setBalanceText(QStringLiteral("Balance: —"));
+
+    setProtectedPagesAuthenticated(true);
+    m_sidebar->setStatusText(QStringLiteral("Status: connected"));
+
+    m_api->fetchWallet();
+
+    if (m_stack->currentWidget() == m_tradesStack) {
+        m_tradesPage->setLoading(QStringLiteral("Loading your trades..."));
+        m_api->fetchMyTrades();
+    }
+}
+
+void MarketWindow::onSessionCleared() {
+    m_profileName = QStringLiteral("Guest");
+
+    m_profile->setUserName(QStringLiteral("Guest"));
+    m_profile->setEmail(QStringLiteral("—"));
+    m_profile->setWalletAmounts(0, 0);
+    m_profile->setStatusMessage(QStringLiteral("Log in or Sign up to load your wallet."));
+
+    m_tradesPage->setCurrentUserId(QString());
+
+    m_header->setAvatarText(initialsFromName(m_profileName));
+    m_header->setBalanceText(QStringLiteral("Balance: —"));
+
+    setProtectedPagesAuthenticated(false);
+    m_sidebar->setStatusText(QStringLiteral("Status: guest"));
+}
+
+void MarketWindow::onAuthError(const QString &message) {
+    m_portfolioGate->setStatusMessage(message, true);
+    m_ordersGate->setStatusMessage(message, true);
+    m_tradesGate->setStatusMessage(message, true);
+    m_profileGate->setStatusMessage(message, true);
+}
+
+void MarketWindow::openLoginDialog() {
+    openAuthDialog(false);
+}
+
+void MarketWindow::openSignUpDialog() {
+    openAuthDialog(true);
+}
+
+void MarketWindow::openAuthDialog(bool startOnSignUp) {
+    AuthDialog dialog(this);
+    dialog.setMode(startOnSignUp ? AuthDialog::Mode::SignUp : AuthDialog::Mode::Login);
+
+    connect(&dialog, &AuthDialog::loginSubmitted, this, [this](const QString &login, const QString &password) {
+        m_api->login(login, password);
+    });
+
+    connect(&dialog,
+            &AuthDialog::signUpSubmitted,
+            this,
+            [this](const QString &email, const QString &username, const QString &password) {
+                m_api->registerUser(email, username, password);
+            });
+
+    connect(m_api, &MarketApiClient::authBusyChanged, &dialog, &AuthDialog::setBusy);
+    connect(m_api, &MarketApiClient::authError, &dialog, &AuthDialog::setError);
+    connect(m_api, &MarketApiClient::sessionReady, &dialog, &AuthDialog::acceptSuccess);
+
+    dialog.exec();
 }

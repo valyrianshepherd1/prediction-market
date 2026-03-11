@@ -1,28 +1,26 @@
 #include "ProfilePage.h"
 
-#include <QLocale>
 #include <QHBoxLayout>
 #include <QLabel>
+#include <QLocale>
 #include <QPushButton>
 #include <QVBoxLayout>
 
 namespace {
+
 QString formatUnits(qint64 amount, const QString &unitLabel) {
     return QStringLiteral("%1 %2")
         .arg(QLocale().toString(amount))
         .arg(unitLabel);
 }
+
 } // namespace
 
-ProfilePage::ProfilePage(QWidget *parent) : QWidget(parent) {
+ProfilePage::ProfilePage(QWidget *parent)
+    : QWidget(parent) {
     auto *root = new QVBoxLayout(this);
     root->setContentsMargins(24, 24, 24, 24);
     root->setSpacing(16);
-
-    auto *title = new QLabel(QStringLiteral("Profile"), this);
-    title->setAlignment(Qt::AlignCenter);
-    title->setStyleSheet(QStringLiteral("color: white; font-size: 22px; font-weight: 700;"));
-    root->addWidget(title);
 
     auto *card = new QWidget(this);
     card->setObjectName(QStringLiteral("ProfileCard"));
@@ -32,7 +30,9 @@ ProfilePage::ProfilePage(QWidget *parent) : QWidget(parent) {
             border: 1px solid #132238;
             border-radius: 16px;
         }
-        QLabel { color: white; }
+        QLabel {
+            color: white;
+        }
     )");
 
     auto *cardLayout = new QVBoxLayout(card);
@@ -41,6 +41,7 @@ ProfilePage::ProfilePage(QWidget *parent) : QWidget(parent) {
 
     auto addRow = [card, cardLayout](const QString &label, QLabel **valueLabel) {
         auto *row = new QHBoxLayout;
+
         auto *key = new QLabel(label, card);
         key->setStyleSheet(QStringLiteral("color: #9fb2c7; font-size: 14px;"));
 
@@ -51,10 +52,12 @@ ProfilePage::ProfilePage(QWidget *parent) : QWidget(parent) {
         row->addWidget(key);
         row->addStretch(1);
         row->addWidget(*valueLabel);
+
         cardLayout->addLayout(row);
     };
 
-    addRow(QStringLiteral("Name"), &m_nameValue);
+    addRow(QStringLiteral("Username"), &m_nameValue);
+    addRow(QStringLiteral("Email"), &m_emailValue);
     addRow(QStringLiteral("Available"), &m_availableValue);
     addRow(QStringLiteral("Reserved"), &m_reservedValue);
 
@@ -65,22 +68,41 @@ ProfilePage::ProfilePage(QWidget *parent) : QWidget(parent) {
 
     root->addWidget(card, 0, Qt::AlignHCenter);
 
-    auto *back = new QPushButton(QStringLiteral("Back"), this);
-    back->setFixedWidth(120);
-    connect(back, &QPushButton::clicked, this, &ProfilePage::backRequested);
+    auto *buttons = new QHBoxLayout;
+    buttons->setSpacing(10);
 
-    root->addWidget(back, 0, Qt::AlignHCenter);
+    auto *back = new QPushButton(QStringLiteral("Back"), this);
+    auto *logout = new QPushButton(QStringLiteral("Log out"), this);
+
+    back->setFixedWidth(120);
+    logout->setFixedWidth(120);
+
+    connect(back, &QPushButton::clicked, this, &ProfilePage::backRequested);
+    connect(logout, &QPushButton::clicked, this, &ProfilePage::logoutRequested);
+
+    buttons->addStretch(1);
+    buttons->addWidget(back);
+    buttons->addWidget(logout);
+    buttons->addStretch(1);
+
+    root->addLayout(buttons);
     root->addStretch(1);
 
     setUserName(QStringLiteral("Guest"));
+    setEmail(QStringLiteral("—"));
     setWalletAmounts(0, 0);
-    setStatusMessage(
-        QStringLiteral("Set PM_FRONTEND_USER_ID to a valid backend user UUID to load a real wallet."));
+    setStatusMessage(QStringLiteral("Log in to load your wallet."));
 }
 
 void ProfilePage::setUserName(const QString &name) {
     if (m_nameValue) {
         m_nameValue->setText(name);
+    }
+}
+
+void ProfilePage::setEmail(const QString &email) {
+    if (m_emailValue) {
+        m_emailValue->setText(email);
     }
 }
 
@@ -100,6 +122,7 @@ void ProfilePage::setStatusMessage(const QString &message, bool isError) {
 
     m_statusValue->setText(message);
     m_statusValue->setStyleSheet(
-        isError ? QStringLiteral("color: #ff7b72; font-size: 13px;")
-                : QStringLiteral("color: #9fb2c7; font-size: 13px;"));
+        isError
+            ? QStringLiteral("color: #ff7b72; font-size: 13px;")
+            : QStringLiteral("color: #9fb2c7; font-size: 13px;"));
 }

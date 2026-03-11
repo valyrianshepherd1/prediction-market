@@ -1,4 +1,5 @@
 #include "MarketsPage.h"
+
 #include "../MarketCardWidget.h"
 
 #include <QFrame>
@@ -7,26 +8,8 @@
 #include <QScrollArea>
 #include <QVBoxLayout>
 
-namespace {
-QString marketMetaText(const ApiMarket &market) {
-    const int outcomeCount = market.outcomes.size();
-    return QStringLiteral("%1 • %2 outcome%3")
-        .arg(market.status.isEmpty() ? QStringLiteral("OPEN") : market.status)
-        .arg(outcomeCount)
-        .arg(outcomeCount == 1 ? QString() : QStringLiteral("s"));
-}
-
-QVector<OutcomeView> toOutcomeViews(const ApiMarket &market) {
-    QVector<OutcomeView> views;
-    views.reserve(market.outcomes.size());
-    for (const ApiOutcome &outcome : market.outcomes) {
-        views.push_back({outcome.title, outcome.pricePercent});
-    }
-    return views;
-}
-} // namespace
-
-MarketsPage::MarketsPage(QWidget *parent) : QWidget(parent) {
+MarketsPage::MarketsPage(QWidget *parent)
+    : QWidget(parent) {
     auto *root = new QVBoxLayout(this);
     root->setContentsMargins(0, 0, 0, 0);
     root->setSpacing(8);
@@ -77,12 +60,21 @@ void MarketsPage::clearCards() {
 
 void MarketsPage::addCard(const ApiMarket &market) {
     auto *card = new MarketCardWidget(m_container);
-    card->setMarket(market.question, toOutcomeViews(market), marketMetaText(market));
+    card->setMarket(market);
+
+    connect(card, &MarketCardWidget::yesClicked, this, [this, market]() {
+        emit marketRequested(market, QStringLiteral("YES"));
+    });
+
+    connect(card, &MarketCardWidget::noClicked, this, [this, market]() {
+        emit marketRequested(market, QStringLiteral("NO"));
+    });
 
     const int idx = m_grid->count();
     const int cols = 2;
     const int row = idx / cols;
     const int col = idx % cols;
+
     m_grid->addWidget(card, row, col);
 }
 
