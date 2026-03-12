@@ -39,6 +39,12 @@ Makefile
 *.dylib
 
 # -----------------------------
+# Dependency/build caches
+# -----------------------------
+vcpkg_installed/
+.vcpkg-root/
+
+# -----------------------------
 # Environment / secrets
 # -----------------------------
 deploy/.env
@@ -70,7 +76,6 @@ backend/config/logs/
 # -----------------------------
 .DS_Store
 Thumbs.db
-
 
 # -----------------------------
 # Testing
