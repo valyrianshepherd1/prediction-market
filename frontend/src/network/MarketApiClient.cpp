@@ -1,4 +1,4 @@
-#include "MarketApiClient.h"
+#include "../../include/frontend/network/MarketApiClient.h"
 
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -6,6 +6,8 @@
 #include <QJsonParseError>
 #include <QNetworkReply>
 #include <QNetworkRequest>
+#include <QSettings>
+#include <QSslError>
 #include <QUrlQuery>
 
 namespace {
@@ -49,19 +51,50 @@ int bestIndicativePrice(const QJsonObject &orderBook, bool *hasPrice = nullptr) 
     return 0;
 }
 
+QString responseErrorMessage(QNetworkReply *reply, const QByteArray &payload) {
+    const int statusCode = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+
+    if (!payload.trimmed().isEmpty()) {
+        return QStringLiteral("HTTP %1: %2")
+            .arg(statusCode > 0 ? QString::number(statusCode) : QStringLiteral("error"))
+            .arg(QString::fromUtf8(payload).trimmed());
+    }
+
+    if (statusCode > 0) {
+        return QStringLiteral("HTTP %1").arg(statusCode);
+    }
+
+    return reply->errorString();
 }
+
+ApiSession sessionFromUserObject(const QJsonObject &userObject) {
+    ApiSession session;
+    session.userId = userObject.value(QStringLiteral("id")).toString();
+    session.email = userObject.value(QStringLiteral("email")).toString();
+    session.username = userObject.value(QStringLiteral("username")).toString();
+    session.role = userObject.value(QStringLiteral("role")).toString();
+    session.createdAt = userObject.value(QStringLiteral("created_at")).toString();
+    return session;
+}
+
+} // namespace
 
 MarketApiClient::MarketApiClient(QObject *parent)
     : QObject(parent),
-      m_baseUrl(QUrl(normalizeBaseUrl())),
-      m_userId(qEnvironmentVariable("PM_FRONTEND_USER_ID")) {}
+      m_baseUrl(QUrl(normalizeBaseUrl())) {
+    loadPersistedSession();
+}
 
 QString MarketApiClient::baseUrl() const {
     return m_baseUrl.toString();
 }
 
-QString MarketApiClient::configuredUserId() const {
-    return m_userId;
+bool MarketApiClient::isAuthenticated() const {
+    return !m_accessToken.trimmed().isEmpty() && !m_session.userId.trimmed().isEmpty();
+}
+
+ApiSession MarketApiClient::currentSession() const {
+    return m_session;
 }
 
 QUrl MarketApiClient::apiUrl(const QString &pathWithQuery) const {
@@ -87,6 +120,15 @@ QUrl MarketApiClient::apiUrl(const QString &pathWithQuery) const {
     return url;
 }
 
+void MarketApiClient::addCommonHeaders(QNetworkRequest &request, bool includeAuth) const {
+    request.setHeader(QNetworkRequest::ContentTypeHeader, QStringLiteral("application/json"));
+    request.setRawHeader("Accept", "application/json");
+
+    if (includeAuth && !m_accessToken.trimmed().isEmpty()) {
+        request.setRawHeader("Authorization", QByteArray("Bearer ") + m_accessToken.toUtf8());
+    }
+}
+
 void MarketApiClient::ignoreSslErrorsIfNeeded(QNetworkReply *reply) const {
     if (!reply) {
         return;
@@ -106,38 +148,23 @@ void MarketApiClient::ignoreSslErrorsIfNeeded(QNetworkReply *reply) const {
 }
 
 void MarketApiClient::getJson(const QUrl &url,
+                              bool includeAuth,
                               const std::function<void(const QJsonDocument &)> &onSuccess,
-                              const std::function<void(const QString &)> &onError) {
+                              const std::function<void(int, const QString &)> &onError) {
     QNetworkRequest request(url);
-    request.setHeader(QNetworkRequest::ContentTypeHeader, QStringLiteral("application/json"));
-    request.setRawHeader("Accept", "application/json");
-
-    if (!m_userId.isEmpty()) {
-        request.setRawHeader("X-User-Id", m_userId.toUtf8());
-    }
+    addCommonHeaders(request, includeAuth);
 
     QNetworkReply *reply = m_manager.get(request);
     ignoreSslErrorsIfNeeded(reply);
 
     connect(reply, &QNetworkReply::finished, this, [reply, onSuccess, onError]() {
         const QByteArray payload = reply->readAll();
+        const int statusCode = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
 
-        if (reply->error() != QNetworkReply::NoError) {
+        if (reply->error() != QNetworkReply::NoError || statusCode < 200 || statusCode >= 300) {
             if (onError) {
-                const int statusCode = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
-                QString message;
-
-                if (!payload.trimmed().isEmpty()) {
-                    message = QStringLiteral("HTTP %1: %2")
-                                  .arg(statusCode > 0 ? QString::number(statusCode) : QStringLiteral("error"))
-                                  .arg(QString::fromUtf8(payload).trimmed());
-                } else {
-                    message = reply->errorString();
-                }
-
-                onError(message);
+                onError(statusCode, responseErrorMessage(reply, payload));
             }
-
             reply->deleteLater();
             return;
         }
@@ -147,7 +174,8 @@ void MarketApiClient::getJson(const QUrl &url,
 
         if (parseError.error != QJsonParseError::NoError) {
             if (onError) {
-                onError(QStringLiteral("Invalid JSON from %1: %2")
+                onError(statusCode,
+                        QStringLiteral("Invalid JSON from %1: %2")
                             .arg(reply->url().toString(), parseError.errorString()));
             }
             reply->deleteLater();
@@ -160,6 +188,287 @@ void MarketApiClient::getJson(const QUrl &url,
 
         reply->deleteLater();
     });
+}
+
+void MarketApiClient::postJson(const QUrl &url,
+                               const QJsonObject &body,
+                               bool includeAuth,
+                               const std::function<void(const QJsonDocument &)> &onSuccess,
+                               const std::function<void(int, const QString &)> &onError) {
+    QNetworkRequest request(url);
+    addCommonHeaders(request, includeAuth);
+
+    QNetworkReply *reply = m_manager.post(request, QJsonDocument(body).toJson(QJsonDocument::Compact));
+    ignoreSslErrorsIfNeeded(reply);
+
+    connect(reply, &QNetworkReply::finished, this, [reply, onSuccess, onError]() {
+        const QByteArray payload = reply->readAll();
+        const int statusCode = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+
+        if (reply->error() != QNetworkReply::NoError || statusCode < 200 || statusCode >= 300) {
+            if (onError) {
+                onError(statusCode, responseErrorMessage(reply, payload));
+            }
+            reply->deleteLater();
+            return;
+        }
+
+        QJsonParseError parseError;
+        const QJsonDocument document = QJsonDocument::fromJson(payload, &parseError);
+
+        if (parseError.error != QJsonParseError::NoError) {
+            if (onError) {
+                onError(statusCode,
+                        QStringLiteral("Invalid JSON from %1: %2")
+                            .arg(reply->url().toString(), parseError.errorString()));
+            }
+            reply->deleteLater();
+            return;
+        }
+
+        if (onSuccess) {
+            onSuccess(document);
+        }
+
+        reply->deleteLater();
+    });
+}
+
+void MarketApiClient::loadPersistedSession() {
+    QSettings settings;
+
+    m_accessToken = settings.value(QStringLiteral("auth/access_token")).toString();
+    m_refreshToken = settings.value(QStringLiteral("auth/refresh_token")).toString();
+    m_session.userId = settings.value(QStringLiteral("auth/user_id")).toString();
+    m_session.email = settings.value(QStringLiteral("auth/email")).toString();
+    m_session.username = settings.value(QStringLiteral("auth/username")).toString();
+    m_session.role = settings.value(QStringLiteral("auth/role")).toString();
+    m_session.createdAt = settings.value(QStringLiteral("auth/created_at")).toString();
+}
+
+void MarketApiClient::persistSession() const {
+    QSettings settings;
+
+    settings.setValue(QStringLiteral("auth/access_token"), m_accessToken);
+    settings.setValue(QStringLiteral("auth/refresh_token"), m_refreshToken);
+    settings.setValue(QStringLiteral("auth/user_id"), m_session.userId);
+    settings.setValue(QStringLiteral("auth/email"), m_session.email);
+    settings.setValue(QStringLiteral("auth/username"), m_session.username);
+    settings.setValue(QStringLiteral("auth/role"), m_session.role);
+    settings.setValue(QStringLiteral("auth/created_at"), m_session.createdAt);
+}
+
+void MarketApiClient::clearPersistedSession() const {
+    QSettings settings;
+    settings.remove(QStringLiteral("auth"));
+}
+
+void MarketApiClient::clearSession(bool emitSignal) {
+    m_accessToken.clear();
+    m_refreshToken.clear();
+    m_session = ApiSession{};
+    clearPersistedSession();
+
+    if (emitSignal) {
+        emit sessionCleared();
+    }
+}
+
+bool MarketApiClient::storeSessionFromAuthResponse(const QJsonDocument &document, bool emitSignal) {
+    if (!document.isObject()) {
+        return false;
+    }
+
+    const QJsonObject root = document.object();
+    const QJsonObject userObject = root.value(QStringLiteral("user")).toObject();
+
+    if (userObject.isEmpty()) {
+        return false;
+    }
+
+    const QString accessToken = root.value(QStringLiteral("access_token")).toString();
+    const QString refreshToken = root.value(QStringLiteral("refresh_token")).toString();
+
+    if (accessToken.trimmed().isEmpty()) {
+        return false;
+    }
+
+    m_accessToken = accessToken;
+
+    if (!refreshToken.trimmed().isEmpty()) {
+        m_refreshToken = refreshToken;
+    }
+
+    m_session = sessionFromUserObject(userObject);
+    persistSession();
+
+    if (emitSignal) {
+        emit sessionReady(m_session);
+    }
+
+    return true;
+}
+
+bool MarketApiClient::storeSessionFromUserResponse(const QJsonDocument &document, bool emitSignal) {
+    if (!document.isObject()) {
+        return false;
+    }
+
+    const QJsonObject root = document.object();
+    const ApiSession session = sessionFromUserObject(root);
+
+    if (session.userId.trimmed().isEmpty()) {
+        return false;
+    }
+
+    m_session = session;
+    persistSession();
+
+    if (emitSignal) {
+        emit sessionReady(m_session);
+    }
+
+    return true;
+}
+
+void MarketApiClient::refreshSession(const std::function<void()> &onSuccess,
+                                     const std::function<void(const QString &)> &onFailure) {
+    if (m_refreshToken.trimmed().isEmpty()) {
+        if (onFailure) {
+            onFailure(QStringLiteral("Your session expired. Please log in again."));
+        }
+        return;
+    }
+
+    QJsonObject body;
+    body.insert(QStringLiteral("refresh_token"), m_refreshToken);
+
+    postJson(apiUrl(QStringLiteral("/auth/refresh")),
+             body,
+             false,
+             [this, onSuccess, onFailure](const QJsonDocument &document) {
+                 if (!storeSessionFromAuthResponse(document, false)) {
+                     clearSession(true);
+                     if (onFailure) {
+                         onFailure(QStringLiteral("Invalid refresh response from backend."));
+                     }
+                     return;
+                 }
+
+                 if (onSuccess) {
+                     onSuccess();
+                 }
+             },
+             [this, onFailure](int, const QString &message) {
+                 clearSession(true);
+                 if (onFailure) {
+                     onFailure(message);
+                 }
+             });
+}
+
+void MarketApiClient::restoreSession() {
+    if (m_accessToken.trimmed().isEmpty() && m_refreshToken.trimmed().isEmpty()) {
+        emit sessionCleared();
+        return;
+    }
+
+    if (m_accessToken.trimmed().isEmpty() && !m_refreshToken.trimmed().isEmpty()) {
+        refreshSession(
+            [this]() { restoreSession(); },
+            [this](const QString &) { clearSession(true); });
+        return;
+    }
+
+    getJson(apiUrl(QStringLiteral("/me")),
+            true,
+            [this](const QJsonDocument &document) {
+                if (!storeSessionFromUserResponse(document, true)) {
+                    clearSession(true);
+                }
+            },
+            [this](int statusCode, const QString &) {
+                if (statusCode == 401 && !m_refreshToken.trimmed().isEmpty()) {
+                    refreshSession(
+                        [this]() { restoreSession(); },
+                        [this](const QString &) { clearSession(true); });
+                    return;
+                }
+
+                clearSession(true);
+            });
+}
+
+void MarketApiClient::login(const QString &loginValue, const QString &password) {
+    emit authBusyChanged(true);
+
+    QJsonObject body;
+    body.insert(QStringLiteral("login"), loginValue);
+    body.insert(QStringLiteral("password"), password);
+
+    postJson(apiUrl(QStringLiteral("/auth/login")),
+             body,
+             false,
+             [this](const QJsonDocument &document) {
+                 emit authBusyChanged(false);
+
+                 if (!storeSessionFromAuthResponse(document, true)) {
+                     emit authError(QStringLiteral("Invalid login response from backend."));
+                 }
+             },
+             [this](int, const QString &message) {
+                 emit authBusyChanged(false);
+                 emit authError(message);
+             });
+}
+
+void MarketApiClient::registerUser(const QString &email,
+                                   const QString &username,
+                                   const QString &password) {
+    emit authBusyChanged(true);
+
+    QJsonObject body;
+    body.insert(QStringLiteral("email"), email);
+    body.insert(QStringLiteral("username"), username);
+    body.insert(QStringLiteral("password"), password);
+
+    postJson(apiUrl(QStringLiteral("/auth/register")),
+             body,
+             false,
+             [this](const QJsonDocument &document) {
+                 emit authBusyChanged(false);
+
+                 if (!storeSessionFromAuthResponse(document, true)) {
+                     emit authError(QStringLiteral("Invalid sign-up response from backend."));
+                 }
+             },
+             [this](int, const QString &message) {
+                 emit authBusyChanged(false);
+                 emit authError(message);
+             });
+}
+
+void MarketApiClient::logout() {
+    const QString refreshToken = m_refreshToken;
+    clearSession(true);
+
+    if (refreshToken.trimmed().isEmpty()) {
+        emit loggedOut();
+        return;
+    }
+
+    QJsonObject body;
+    body.insert(QStringLiteral("refresh_token"), refreshToken);
+
+    postJson(apiUrl(QStringLiteral("/auth/logout")),
+             body,
+             false,
+             [this](const QJsonDocument &) {
+                 emit loggedOut();
+             },
+             [this](int, const QString &) {
+                 emit loggedOut();
+             });
 }
 
 void MarketApiClient::finishPendingMarketRequest() {
@@ -178,6 +487,7 @@ void MarketApiClient::fetchMarkets() {
     m_pendingMarketRequests = 0;
 
     getJson(apiUrl(QStringLiteral("/markets?status=OPEN&limit=100")),
+            false,
             [this](const QJsonDocument &document) {
                 if (!document.isArray()) {
                     emit marketsError(QStringLiteral("/markets did not return an array."));
@@ -206,6 +516,7 @@ void MarketApiClient::fetchMarkets() {
                     m_markets.push_back(market);
 
                     getJson(apiUrl(QStringLiteral("/markets/%1/outcomes").arg(market.id)),
+                            false,
                             [this, marketIndex](const QJsonDocument &outcomesDocument) {
                                 if (!outcomesDocument.isArray()) {
                                     finishPendingMarketRequest();
@@ -241,6 +552,7 @@ void MarketApiClient::fetchMarkets() {
                                     const QString outcomeId = market.outcomes[outcomeIndex].id;
 
                                     getJson(apiUrl(QStringLiteral("/outcomes/%1/orderbook?depth=1").arg(outcomeId)),
+                                            false,
                                             [this, marketIndex, outcomeIndex](const QJsonDocument &orderBookDocument) {
                                                 if (orderBookDocument.isObject()) {
                                                     bool hasPrice = false;
@@ -256,34 +568,35 @@ void MarketApiClient::fetchMarkets() {
 
                                                 finishPendingMarketRequest();
                                             },
-                                            [this](const QString &) {
+                                            [this](int, const QString &) {
                                                 finishPendingMarketRequest();
                                             });
                                 }
 
                                 finishPendingMarketRequest();
                             },
-                            [this](const QString &) {
+                            [this](int, const QString &) {
                                 finishPendingMarketRequest();
                             });
                 }
             },
-            [this](const QString &message) {
+            [this](int, const QString &message) {
                 emit marketsError(QStringLiteral("Could not load markets from %1.\n%2")
                                       .arg(baseUrl(), message));
             });
 }
 
 void MarketApiClient::fetchWallet() {
-    if (m_userId.trimmed().isEmpty()) {
-        emit walletError(QStringLiteral("Set PM_FRONTEND_USER_ID before starting the Qt app to load a wallet."));
+    if (!isAuthenticated()) {
+        emit walletError(QStringLiteral("Log in or Sign up to load your wallet."));
         return;
     }
 
-    getJson(apiUrl(QStringLiteral("/wallets/%1").arg(m_userId)),
+    getJson(apiUrl(QStringLiteral("/wallet")),
+            true,
             [this](const QJsonDocument &document) {
                 if (!document.isObject()) {
-                    emit walletError(QStringLiteral("/wallets/{userId} did not return an object."));
+                    emit walletError(QStringLiteral("/wallet did not return an object."));
                     return;
                 }
 
@@ -297,15 +610,23 @@ void MarketApiClient::fetchWallet() {
 
                 emit walletReady(wallet);
             },
-            [this](const QString &message) {
-                emit walletError(QStringLiteral("Could not load wallet for %1.\n%2")
-                                     .arg(m_userId, message));
+            [this](int statusCode, const QString &message) {
+                if (statusCode == 401 && !m_refreshToken.trimmed().isEmpty()) {
+                    refreshSession(
+                        [this]() { fetchWallet(); },
+                        [this](const QString &refreshMessage) {
+                            emit walletError(QStringLiteral("Session expired.\n%1").arg(refreshMessage));
+                        });
+                    return;
+                }
+
+                emit walletError(QStringLiteral("Could not load wallet.\n%1").arg(message));
             });
 }
 
 void MarketApiClient::fetchMyTrades(int limit, int offset) {
-    if (m_userId.trimmed().isEmpty()) {
-        emit tradesError(QStringLiteral("Set PM_FRONTEND_USER_ID before opening Trades."));
+    if (!isAuthenticated()) {
+        emit tradesError(QStringLiteral("Log in or Sign up to load your trade history."));
         return;
     }
 
@@ -317,6 +638,7 @@ void MarketApiClient::fetchMyTrades(int limit, int offset) {
     }
 
     getJson(apiUrl(QStringLiteral("/me/trades?limit=%1&offset=%2").arg(limit).arg(offset)),
+            true,
             [this](const QJsonDocument &document) {
                 if (!document.isArray()) {
                     emit tradesError(QStringLiteral("/me/trades did not return an array."));
@@ -350,8 +672,147 @@ void MarketApiClient::fetchMyTrades(int limit, int offset) {
 
                 emit tradesReady(trades);
             },
-            [this](const QString &message) {
-                emit tradesError(QStringLiteral("Could not load trades for %1.\n%2")
-                                     .arg(m_userId, message));
+            [this](int statusCode, const QString &message) {
+                if (statusCode == 401 && !m_refreshToken.trimmed().isEmpty()) {
+                    refreshSession(
+                        [this]() { fetchMyTrades(); },
+                        [this](const QString &refreshMessage) {
+                            emit tradesError(QStringLiteral("Session expired.\n%1").arg(refreshMessage));
+                        });
+                    return;
+                }
+
+                emit tradesError(QStringLiteral("Could not load trades.\n%1").arg(message));
             });
+}
+
+void MarketApiClient::adminDepositToCurrentUser(qint64 amount) {
+    if (!isAuthenticated()) {
+        emit depositError(QStringLiteral("Log in first."));
+        return;
+    }
+
+    if (m_session.userId.trimmed().isEmpty()) {
+        emit depositError(QStringLiteral("Current user id is missing."));
+        return;
+    }
+
+    if (amount <= 0) {
+        emit depositError(QStringLiteral("Amount must be greater than zero."));
+        return;
+    }
+
+    emit depositBusyChanged(true);
+
+    QJsonObject body;
+    body.insert(QStringLiteral("user_id"), m_session.userId);
+    body.insert(QStringLiteral("amount"), QJsonValue(static_cast<double>(amount)));
+
+    postJson(apiUrl(QStringLiteral("/admin/deposit")),
+             body,
+             true,
+             [this](const QJsonDocument &document) {
+                 emit depositBusyChanged(false);
+
+                 if (!document.isObject()) {
+                     emit depositError(QStringLiteral("/admin/deposit did not return an object."));
+                     return;
+                 }
+
+                 const QJsonObject object = document.object();
+
+                 ApiWallet wallet;
+                 wallet.userId = object.value(QStringLiteral("user_id")).toString();
+                 wallet.available = object.value(QStringLiteral("available")).toVariant().toLongLong();
+                 wallet.reserved = object.value(QStringLiteral("reserved")).toVariant().toLongLong();
+                 wallet.updatedAt = object.value(QStringLiteral("updated_at")).toString();
+
+                 emit depositSucceeded(wallet);
+             },
+             [this](int statusCode, const QString &message) {
+                 emit depositBusyChanged(false);
+
+                 if (statusCode == 401 || statusCode == 403) {
+                     emit depositError(QStringLiteral(
+                         "Deposit is currently admin-only in the backend."));
+                     return;
+                 }
+
+                 emit depositError(QStringLiteral("Could not add money.\n%1").arg(message));
+             });
+}
+
+void MarketApiClient::createOrder(const QString &outcomeId,
+                                  const QString &side,
+                                  int priceBasisPoints,
+                                  qint64 quantityMicros) {
+    if (!isAuthenticated()) {
+        emit orderError(QStringLiteral("Log in or Sign up to place an order."));
+        return;
+    }
+
+    const QString normalizedSide = side.trimmed().toUpper();
+
+    if (outcomeId.trimmed().isEmpty()) {
+        emit orderError(QStringLiteral("No outcome is selected."));
+        return;
+    }
+
+    if (normalizedSide != QStringLiteral("BUY") &&
+        normalizedSide != QStringLiteral("SELL")) {
+        emit orderError(QStringLiteral("Order side must be BUY or SELL."));
+        return;
+    }
+
+    if (priceBasisPoints <= 0 || priceBasisPoints >= 10000) {
+        emit orderError(QStringLiteral("Price must be between 0.01% and 99.99%."));
+        return;
+    }
+
+    if (quantityMicros <= 0) {
+        emit orderError(QStringLiteral("Quantity must be greater than zero."));
+        return;
+    }
+
+    emit orderBusyChanged(true);
+
+    QJsonObject body;
+    body.insert(QStringLiteral("outcome_id"), outcomeId);
+    body.insert(QStringLiteral("side"), normalizedSide);
+    body.insert(QStringLiteral("price_bp"), priceBasisPoints);
+    body.insert(QStringLiteral("qty_micros"), QJsonValue(static_cast<double>(quantityMicros)));
+
+    postJson(apiUrl(QStringLiteral("/orders")),
+             body,
+             true,
+             [this](const QJsonDocument &document) {
+                 emit orderBusyChanged(false);
+
+                 if (!document.isObject()) {
+                     emit orderError(QStringLiteral("/orders did not return an object."));
+                     return;
+                 }
+
+                 const QJsonObject object = document.object();
+
+                 ApiOrder order;
+                 order.id = object.value(QStringLiteral("id")).toString();
+                 order.userId = object.value(QStringLiteral("user_id")).toString();
+                 order.outcomeId = object.value(QStringLiteral("outcome_id")).toString();
+                 order.side = object.value(QStringLiteral("side")).toString();
+                 order.priceBasisPoints = object.value(QStringLiteral("price_bp")).toInt();
+                 order.quantityTotalMicros =
+                     object.value(QStringLiteral("qty_total_micros")).toVariant().toLongLong();
+                 order.quantityRemainingMicros =
+                     object.value(QStringLiteral("qty_remaining_micros")).toVariant().toLongLong();
+                 order.status = object.value(QStringLiteral("status")).toString();
+                 order.createdAt = object.value(QStringLiteral("created_at")).toString();
+                 order.updatedAt = object.value(QStringLiteral("updated_at")).toString();
+
+                 emit orderCreated(order);
+             },
+             [this](int, const QString &message) {
+                 emit orderBusyChanged(false);
+                 emit orderError(QStringLiteral("Could not place order.\n%1").arg(message));
+             });
 }

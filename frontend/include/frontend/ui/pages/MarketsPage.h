@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../../network/MarketApiClient.h"
+
 #include <QWidget>
 
 class QLabel;
@@ -11,6 +12,9 @@ class MarketsPage : public QWidget {
     Q_OBJECT
 public:
     explicit MarketsPage(QWidget *parent = nullptr);
+
+    signals:
+        void marketRequested(const ApiMarket &market, const QString &preferredSelection);
 
 public slots:
     void setMarkets(const QVector<ApiMarket> &markets);
@@ -23,7 +27,6 @@ private:
     void addCard(const ApiMarket &market);
 
     QVector<ApiMarket> m_allMarkets;
-
     QLabel *m_statusLabel = nullptr;
     QScrollArea *m_scroll = nullptr;
     QWidget *m_container = nullptr;

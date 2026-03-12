@@ -1,4 +1,4 @@
-#include "HeaderBar.h"
+#include "../../include/frontend/ui/HeaderBar.h"
 
 #include <QHBoxLayout>
 #include <QLabel>

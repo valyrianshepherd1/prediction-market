@@ -1,10 +1,15 @@
 #include <QApplication>
+#include <QCoreApplication>
 
-#include "app/MarketWindow.h"
+#include "../include/frontend/app/MarketWindow.h"
 
 int main(int argc, char *argv[]) {
     QApplication app(argc, argv);
-    app.setApplicationName(QStringLiteral("PreDgict"));
+
+    QCoreApplication::setOrganizationName(QStringLiteral("prediction-market"));
+    QCoreApplication::setOrganizationDomain(QStringLiteral("local.prediction-market"));
+    QCoreApplication::setApplicationName(QStringLiteral("PreDgict"));
+
     app.setApplicationDisplayName(QStringLiteral("PreDgict"));
 
     MarketWindow window;

@@ -1,4 +1,4 @@
-#include "HomePage.h"
+#include "../../../include/frontend/ui/pages/HomePage.h"
 #include <QVBoxLayout>
 #include <QLabel>
 #include <QPushButton>

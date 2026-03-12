@@ -1,4 +1,4 @@
-#include "TradesPage.h"
+#include "../../../include/frontend/ui/pages/TradesPage.h"
 
 #include <QAbstractItemView>
 #include <QDateTime>
@@ -88,7 +88,7 @@ TradesPage::TradesPage(QWidget *parent)
 
     root->addWidget(m_table, 1);
 
-    setError(QStringLiteral("Set PM_FRONTEND_USER_ID to load your trade history."));
+    setError(QStringLiteral("Log in or Sign up to load your trade history."));
 }
 
 void TradesPage::setCurrentUserId(const QString &userId) {
