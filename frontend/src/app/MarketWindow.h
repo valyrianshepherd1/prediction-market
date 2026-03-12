@@ -7,7 +7,9 @@
 class AuthRequiredPage;
 class HeaderBar;
 class MarketsPage;
+class PortfolioPage;
 class ProfilePage;
+class OrdersPage;
 class Sidebar;
 class TradesPage;
 class QStackedWidget;
@@ -41,8 +43,8 @@ private:
     MarketsPage *m_markets = nullptr;
     MarketDetailsPage *m_marketDetailsPage = nullptr;
 
-    QWidget *m_portfolioPage = nullptr;
-    QWidget *m_ordersPage = nullptr;
+    PortfolioPage *m_portfolioPage = nullptr;
+    OrdersPage *m_ordersPage = nullptr;
     TradesPage *m_tradesPage = nullptr;
     ProfilePage *m_profile = nullptr;
 

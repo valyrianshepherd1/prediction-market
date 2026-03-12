@@ -5,6 +5,7 @@
 #include <QFrame>
 #include <QHBoxLayout>
 #include <QLabel>
+#include <QLocale>
 #include <QPushButton>
 #include <QVBoxLayout>
 #include <QWidget>
@@ -18,6 +19,14 @@ QString formatCreatedAt(const QString &createdAt) {
         return QString();
     }
     return dt.date().toString(QStringLiteral("dd MMM yyyy"));
+}
+
+QString formatPoints(qint64 micros, int decimals = 4) {
+    return QLocale().toString(static_cast<double>(micros) / 1000000.0, 'f', decimals);
+}
+
+QString formatMoney(double value) {
+    return QLocale().toString(value, 'f', 2);
 }
 
 } // namespace
@@ -80,7 +89,6 @@ MarketDetailsPage::MarketDetailsPage(QWidget *parent)
 
     sideRow->addWidget(m_buyButton);
     sideRow->addWidget(m_sellButton);
-
     ticketLayout->addLayout(sideRow);
 
     auto *outcomeRow = new QHBoxLayout;
@@ -94,8 +102,12 @@ MarketDetailsPage::MarketDetailsPage(QWidget *parent)
 
     outcomeRow->addWidget(m_yesButton);
     outcomeRow->addWidget(m_noButton);
-
     ticketLayout->addLayout(outcomeRow);
+
+    m_ownedPointsLabel = new QLabel(ticketCard);
+    m_ownedPointsLabel->setStyleSheet(QStringLiteral(
+        "color: #9fb2c7; font-size: 14px; font-weight: 600;"));
+    ticketLayout->addWidget(m_ownedPointsLabel);
 
     auto *amountLabel = new QLabel(QStringLiteral("Amount"), ticketCard);
     amountLabel->setStyleSheet(QStringLiteral(
@@ -112,14 +124,6 @@ MarketDetailsPage::MarketDetailsPage(QWidget *parent)
         "padding: 10px 12px; color: white; font-size: 20px; }"));
     m_amountSpin->setButtonSymbols(QAbstractSpinBox::NoButtons);
     ticketLayout->addWidget(m_amountSpin);
-
-    connect(m_amountSpin,
-        qOverload<double>(&QDoubleSpinBox::valueChanged),
-        this,
-        [this](double) {
-            m_ticketStatusLabel->clear();
-            updateTicketUi();
-        });
 
     auto *quickRow = new QHBoxLayout;
     quickRow->setSpacing(8);
@@ -144,6 +148,18 @@ MarketDetailsPage::MarketDetailsPage(QWidget *parent)
     addQuickButton(QStringLiteral("+100"), 100.0);
 
     ticketLayout->addLayout(quickRow);
+
+    m_tradePreviewLabel = new QLabel(ticketCard);
+    m_tradePreviewLabel->setWordWrap(true);
+    m_tradePreviewLabel->setStyleSheet(QStringLiteral(
+        "color: #dbe7f3; font-size: 14px; font-weight: 600;"));
+    ticketLayout->addWidget(m_tradePreviewLabel);
+
+    m_payoutPreviewLabel = new QLabel(ticketCard);
+    m_payoutPreviewLabel->setWordWrap(true);
+    m_payoutPreviewLabel->setStyleSheet(QStringLiteral(
+        "color: #9fb2c7; font-size: 13px;"));
+    ticketLayout->addWidget(m_payoutPreviewLabel);
 
     m_ticketStatusLabel = new QLabel(ticketCard);
     m_ticketStatusLabel->setWordWrap(true);
@@ -170,7 +186,6 @@ MarketDetailsPage::MarketDetailsPage(QWidget *parent)
 
     contentRow->addWidget(ticketCard, 0);
     contentRow->addStretch(1);
-
     root->addLayout(contentRow);
 
     connect(backButton, &QPushButton::clicked, this, &MarketDetailsPage::backRequested);
@@ -188,6 +203,14 @@ MarketDetailsPage::MarketDetailsPage(QWidget *parent)
     connect(m_noButton, &QPushButton::clicked, this, [this]() {
         selectBinaryOutcome(QStringLiteral("NO"));
     });
+
+    connect(m_amountSpin,
+            qOverload<double>(&QDoubleSpinBox::valueChanged),
+            this,
+            [this](double) {
+                clearTransientStatus();
+                updateTicketUi();
+            });
 
     connect(m_loginButton, &QPushButton::clicked, this, &MarketDetailsPage::loginRequested);
     connect(m_submitButton, &QPushButton::clicked, this, &MarketDetailsPage::submitOrder);
@@ -221,6 +244,7 @@ void MarketDetailsPage::setApiClient(MarketApiClient *api) {
 
     connect(m_api, &MarketApiClient::orderCreated, this, [this](const ApiOrder &order) {
         m_orderBusy = false;
+        applyFilledOrderToKnownPositions(order);
         m_ticketStatusLabel->setText(QStringLiteral("Order placed: %1").arg(order.id));
         m_ticketStatusLabel->setStyleSheet(QStringLiteral(
             "color: #7ef0a8; font-size: 13px;"));
@@ -236,10 +260,14 @@ void MarketDetailsPage::setApiClient(MarketApiClient *api) {
     });
 
     connect(m_api, &MarketApiClient::sessionReady, this, [this](const ApiSession &) {
+        m_knownOwnedMicrosByOutcome.clear();
+        clearTransientStatus();
         updateTicketUi();
     });
 
     connect(m_api, &MarketApiClient::sessionCleared, this, [this]() {
+        m_knownOwnedMicrosByOutcome.clear();
+        clearTransientStatus();
         updateTicketUi();
     });
 
@@ -315,16 +343,22 @@ void MarketDetailsPage::setMarket(const ApiMarket &market, const QString &prefer
         }
     }
 
+    clearTransientStatus();
+    updateTicketUi();
+}
+
+void MarketDetailsPage::clearTransientStatus() {
+    if (!m_ticketStatusLabel) {
+        return;
+    }
     m_ticketStatusLabel->clear();
     m_ticketStatusLabel->setStyleSheet(QStringLiteral(
         "color: #9fb2c7; font-size: 13px;"));
-
-    updateTicketUi();
 }
 
 void MarketDetailsPage::setOrderSide(const QString &side) {
     m_orderSide = normalizedSide(side);
-    m_ticketStatusLabel->clear();
+    clearTransientStatus();
     updateTicketUi();
 }
 
@@ -335,7 +369,7 @@ void MarketDetailsPage::selectBinaryOutcome(const QString &titleUpper) {
     }
 
     m_selectedOutcomeId = outcome->id;
-    m_ticketStatusLabel->clear();
+    clearTransientStatus();
     updateTicketUi();
 }
 
@@ -386,14 +420,26 @@ void MarketDetailsPage::updateOutcomeButtons() {
         .arg(noSelected ? QStringLiteral("#472126") : QStringLiteral("#34181c")));
 }
 
+qint64 MarketDetailsPage::knownOwnedMicros(const QString &outcomeId) const {
+    return m_knownOwnedMicrosByOutcome.value(outcomeId, 0);
+}
+
+void MarketDetailsPage::applyFilledOrderToKnownPositions(const ApiOrder &order) {
+    const qint64 filledMicros = qMax<qint64>(0, order.quantityTotalMicros - order.quantityRemainingMicros);
+    if (filledMicros <= 0) {
+        return;
+    }
+
+    const bool isSell = order.side.trimmed().toUpper() == QStringLiteral("SELL");
+    const qint64 delta = isSell ? -filledMicros : filledMicros;
+    m_knownOwnedMicrosByOutcome[order.outcomeId] += delta;
+}
+
 void MarketDetailsPage::updateTicketUi() {
     const ApiOutcome *outcome = selectedOutcome();
 
     const bool loggedIn =
-    m_api && (
-        m_api->isAuthenticated() ||
-        !m_api->currentSession().userId.trimmed().isEmpty()
-    );
+        m_api && (m_api->isAuthenticated() || !m_api->currentSession().userId.trimmed().isEmpty());
 
     updateSideButtons();
     updateOutcomeButtons();
@@ -401,31 +447,57 @@ void MarketDetailsPage::updateTicketUi() {
     const bool hasOutcome = (outcome != nullptr);
 
     m_amountSpin->setEnabled(hasOutcome && !m_orderBusy);
-
     m_loginButton->setVisible(!loggedIn);
     m_submitButton->setVisible(loggedIn);
     m_submitButton->setEnabled(loggedIn && hasOutcome && !m_orderBusy);
+    m_submitButton->setText(m_orderBusy ? QStringLiteral("Submitting...") : QStringLiteral("Trade"));
 
-    if (m_orderBusy) {
-        m_submitButton->setText(QStringLiteral("Submitting..."));
+    if (!hasOutcome) {
+        m_ownedPointsLabel->setText(QStringLiteral("Owned points: 0.0000"));
+        m_tradePreviewLabel->setText(QStringLiteral("Choose Yes or No."));
+        m_payoutPreviewLabel->clear();
     } else {
-        m_submitButton->setText(QStringLiteral("Trade"));
+        const double amount = m_amountSpin->value();
+        const double price = static_cast<double>(outcome->pricePercent) / 100.0;
+        const double notional = amount * price;
+        const qint64 ownedMicros = knownOwnedMicros(outcome->id);
+
+        m_ownedPointsLabel->setText(
+            QStringLiteral("Owned %1 points: %2")
+                .arg(outcome->title.trimmed().toUpper())
+                .arg(formatPoints(ownedMicros)));
+
+        m_tradePreviewLabel->setText(
+            QStringLiteral("%1 %2 at %3 × %4 points")
+                .arg(m_orderSide == QStringLiteral("BUY") ? QStringLiteral("Buy") : QStringLiteral("Sell"))
+                .arg(outcome->title.trimmed().toUpper())
+                .arg(centsText(outcome->pricePercent))
+                .arg(formatMoney(amount)));
+
+        if (m_orderSide == QStringLiteral("BUY")) {
+            const double payoutIfCorrect = amount;
+            const double profitIfCorrect = payoutIfCorrect - notional;
+            m_payoutPreviewLabel->setText(
+                QStringLiteral("Cost now: %1 • Payout if correct: %2 • Profit if correct: %3")
+                    .arg(formatMoney(notional))
+                    .arg(formatMoney(payoutIfCorrect))
+                    .arg(formatMoney(profitIfCorrect)));
+        } else {
+            const double receiveNow = notional;
+            const double maxLiability = amount - notional;
+            m_payoutPreviewLabel->setText(
+                QStringLiteral("Receive now: %1 • Max liability if the outcome wins: %2")
+                    .arg(formatMoney(receiveNow))
+                    .arg(formatMoney(maxLiability)));
+        }
     }
 
     if (!loggedIn) {
         m_ticketStatusLabel->setText(QStringLiteral("Log in or Sign up to place an order."));
         m_ticketStatusLabel->setStyleSheet(QStringLiteral(
             "color: #9fb2c7; font-size: 13px;"));
-    } else if (!hasOutcome) {
+    } else if (!hasOutcome && m_ticketStatusLabel->text().trimmed().isEmpty()) {
         m_ticketStatusLabel->setText(QStringLiteral("Choose Yes or No."));
-        m_ticketStatusLabel->setStyleSheet(QStringLiteral(
-            "color: #9fb2c7; font-size: 13px;"));
-    } else if (m_ticketStatusLabel->text().trimmed().isEmpty()) {
-        m_ticketStatusLabel->setText(
-            QStringLiteral("%1 %2 for %3")
-                .arg(m_orderSide == QStringLiteral("BUY") ? QStringLiteral("Buy") : QStringLiteral("Sell"))
-                .arg(outcome->title)
-                .arg(QString::number(m_amountSpin->value(), 'f', 2)));
         m_ticketStatusLabel->setStyleSheet(QStringLiteral(
             "color: #9fb2c7; font-size: 13px;"));
     }

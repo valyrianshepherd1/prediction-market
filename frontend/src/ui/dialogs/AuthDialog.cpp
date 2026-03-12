@@ -11,8 +11,20 @@
 AuthDialog::AuthDialog(QWidget *parent)
     : QDialog(parent) {
     setModal(true);
-    resize(420, 280);
+    resize(560, 380);
+    setMinimumSize(560, 380);
     setWindowTitle(QStringLiteral("Account"));
+
+    setStyleSheet(R"(
+        QDialog { background: #0d141d; }
+        QTabWidget::pane { border: 1px solid #132238; border-radius: 12px; background: #07111d; top: -1px; }
+        QTabBar::tab { background: #141c26; color: #c8d7e6; padding: 10px 18px; border: 1px solid #132238; border-bottom: none; min-width: 120px; }
+        QTabBar::tab:selected { background: #182331; color: white; }
+        QLabel { color: #c8d7e6; }
+        QLineEdit { background: #09131f; border: 1px solid #223349; border-radius: 10px; padding: 10px 12px; color: white; min-width: 320px; }
+        QPushButton { background: #1d7dfa; border: 1px solid #3b8ef9; color: white; padding: 10px 18px; border-radius: 10px; font-weight: 700; min-width: 120px; }
+        QPushButton:hover { background: #2c87fb; }
+    )");
 
     auto *root = new QVBoxLayout(this);
     root->setContentsMargins(18, 18, 18, 18);
@@ -33,12 +45,16 @@ AuthDialog::AuthDialog(QWidget *parent)
 
     auto *loginForm = new QFormLayout;
     loginForm->setContentsMargins(0, 0, 0, 0);
-    loginForm->setSpacing(10);
+    loginForm->setSpacing(14);
+    loginForm->setLabelAlignment(Qt::AlignLeft | Qt::AlignVCenter);
+    loginForm->setFormAlignment(Qt::AlignTop | Qt::AlignLeft);
 
     m_loginField = new QLineEdit(loginTab);
+    m_loginField->setMinimumWidth(320);
     m_loginField->setPlaceholderText(QStringLiteral("username or email"));
 
     m_loginPasswordField = new QLineEdit(loginTab);
+    m_loginPasswordField->setMinimumWidth(320);
     m_loginPasswordField->setEchoMode(QLineEdit::Password);
     m_loginPasswordField->setPlaceholderText(QStringLiteral("password"));
 
@@ -59,15 +75,20 @@ AuthDialog::AuthDialog(QWidget *parent)
 
     auto *signupForm = new QFormLayout;
     signupForm->setContentsMargins(0, 0, 0, 0);
-    signupForm->setSpacing(10);
+    signupForm->setSpacing(14);
+    signupForm->setLabelAlignment(Qt::AlignLeft | Qt::AlignVCenter);
+    signupForm->setFormAlignment(Qt::AlignTop | Qt::AlignLeft);
 
     m_signupEmailField = new QLineEdit(signupTab);
+    m_signupEmailField->setMinimumWidth(320);
     m_signupEmailField->setPlaceholderText(QStringLiteral("name@example.com"));
 
     m_signupUsernameField = new QLineEdit(signupTab);
+    m_signupUsernameField->setMinimumWidth(320);
     m_signupUsernameField->setPlaceholderText(QStringLiteral("username"));
 
     m_signupPasswordField = new QLineEdit(signupTab);
+    m_signupPasswordField->setMinimumWidth(320);
     m_signupPasswordField->setEchoMode(QLineEdit::Password);
     m_signupPasswordField->setPlaceholderText(QStringLiteral("min 8 characters"));
 

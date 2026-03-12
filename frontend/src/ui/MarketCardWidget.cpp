@@ -4,8 +4,8 @@
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QMouseEvent>
-#include <QVBoxLayout>
 #include <QPushButton>
+#include <QVBoxLayout>
 
 namespace {
 
@@ -39,6 +39,7 @@ MarketCardWidget::MarketCardWidget(QWidget *parent)
     m_meta->setAlignment(Qt::AlignCenter);
     m_meta->setStyleSheet(QStringLiteral("color: #9fb0c3; font-size: 12px;"));
     root->addWidget(m_meta);
+    m_meta->setAttribute(Qt::WA_TransparentForMouseEvents);
 
     m_question = new QLabel(this);
     m_question->setObjectName(QStringLiteral("MarketQuestion"));
@@ -48,8 +49,6 @@ MarketCardWidget::MarketCardWidget(QWidget *parent)
     m_question->setStyleSheet(QStringLiteral(
         "font-size: 18px; font-weight: 700; color: white;"));
     root->addWidget(m_question);
-
-    m_meta->setAttribute(Qt::WA_TransparentForMouseEvents);
     m_question->setAttribute(Qt::WA_TransparentForMouseEvents);
 
     root->addStretch(1);
@@ -86,7 +85,6 @@ MarketCardWidget::MarketCardWidget(QWidget *parent)
     connect(m_noValue, &QPushButton::clicked, this, [this]() {
         emit openRequested(QStringLiteral("NO"));
     });
-
 }
 
 bool MarketCardWidget::isBinaryYesNoMarket(const ApiMarket &market) const {

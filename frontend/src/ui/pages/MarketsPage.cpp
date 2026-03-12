@@ -63,9 +63,9 @@ void MarketsPage::addCard(const ApiMarket &market) {
     card->setMarket(market);
 
     connect(card, &MarketCardWidget::openRequested, this,
-        [this, market](const QString &preferredSelection) {
-            emit marketRequested(market, preferredSelection);
-        });
+            [this, market](const QString &preferredSelection) {
+                emit marketRequested(market, preferredSelection);
+            });
 
     const int idx = m_grid->count();
     const int cols = 2;

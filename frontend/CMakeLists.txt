@@ -30,17 +30,21 @@ add_executable(frontend_app
         src/ui/pages/ProfilePage.cpp
         src/ui/pages/TradesPage.h
         src/ui/pages/TradesPage.cpp
+        src/ui/pages/PortfolioPage.h
+        src/ui/pages/PortfolioPage.cpp
+        src/ui/pages/OrdersPage.h
+        src/ui/pages/OrdersPage.cpp
         src/ui/pages/AuthRequiredPage.h
         src/ui/pages/AuthRequiredPage.cpp
+        src/ui/pages/MarketDetailsPage.h
+        src/ui/pages/MarketDetailsPage.cpp
 
         src/ui/dialogs/AuthDialog.h
         src/ui/dialogs/AuthDialog.cpp
-        src/ui/pages/AuthRequiredPage.h
-        src/ui/pages/AuthRequiredPage.cpp
-        src/ui/dialogs/AuthDialog.h
-        src/ui/dialogs/AuthDialog.cpp
-        src/ui/pages/MarketDetailsPage.h
-        src/ui/pages/MarketDetailsPage.cpp
+        src/ui/pages/OrdersPage.h
+        src/ui/pages/OrdersPage.cpp
+        src/ui/pages/PortfolioPage.h
+        src/ui/pages/PortfolioPage.cpp
 )
 
 target_link_libraries(frontend_app PRIVATE Qt6::Widgets Qt6::Network)

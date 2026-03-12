@@ -5,18 +5,20 @@
 #include "../ui/dialogs/AuthDialog.h"
 #include "../ui/pages/AuthRequiredPage.h"
 #include "../ui/pages/MarketsPage.h"
+#include "../ui/pages/OrdersPage.h"
+#include "../ui/pages/PortfolioPage.h"
 #include "../ui/pages/ProfilePage.h"
 #include "../ui/pages/TradesPage.h"
 #include "../ui/pages/MarketDetailsPage.h"
 
 #include <QApplication>
+#include <QDateTime>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QLocale>
 #include <QStackedWidget>
 #include <QVBoxLayout>
 #include <QWidget>
-#include <QDateTime>
 
 namespace {
 
@@ -72,36 +74,20 @@ QString formatUnits(qint64 value) {
     return QLocale().toString(value);
 }
 
-QWidget *createPlaceholderPage(const QString &title,
-                               const QString &text,
-                               QWidget *parent = nullptr) {
-    auto *page = new QWidget(parent);
-    page->setObjectName(QStringLiteral("CenterPage"));
-
-    auto *layout = new QVBoxLayout(page);
-    layout->setContentsMargins(36, 36, 36, 36);
-    layout->setSpacing(14);
-
-    auto *titleLabel = new QLabel(title, page);
-    titleLabel->setObjectName(QStringLiteral("CenterPageTitle"));
-
-    auto *textLabel = new QLabel(text, page);
-    textLabel->setObjectName(QStringLiteral("CenterPageText"));
-    textLabel->setWordWrap(true);
-
-    layout->addWidget(titleLabel);
-    layout->addWidget(textLabel);
-    layout->addStretch(1);
-
-    return page;
-}
-
 QStackedWidget *createProtectedStack(QWidget *gate, QWidget *content, QWidget *parent = nullptr) {
     auto *stack = new QStackedWidget(parent);
     stack->addWidget(gate);
     stack->addWidget(content);
     stack->setCurrentIndex(0);
     return stack;
+}
+
+QString formatDateTimeReadable(const QString &value) {
+    const QDateTime dt = QDateTime::fromString(value, Qt::ISODate);
+    if (!dt.isValid()) {
+        return value;
+    }
+    return dt.toLocalTime().toString(QStringLiteral("dd MMM yyyy, HH:mm"));
 }
 
 } // namespace
@@ -139,26 +125,19 @@ MarketWindow::MarketWindow(QWidget *parent)
     m_markets = new MarketsPage(this);
     m_profile = new ProfilePage(this);
     m_tradesPage = new TradesPage(this);
+    m_portfolioPage = new PortfolioPage(this);
+    m_ordersPage = new OrdersPage(this);
 
     m_marketDetailsPage = new MarketDetailsPage(this);
     m_marketDetailsPage->setApiClient(m_api);
     m_marketDetailsPage->setObjectName(QStringLiteral("CenterPage"));
 
-    m_api->restoreSession();
-
-    m_portfolioPage = createPlaceholderPage(
-        QStringLiteral("Portfolio"),
-        QStringLiteral("This page will show your portfolio, positions and exposure."),
-        this);
-
-    m_ordersPage = createPlaceholderPage(
-        QStringLiteral("Orders"),
-        QStringLiteral("This page will show your active, filled and cancelled orders."),
-        this);
+    m_portfolioPage->setApiClient(m_api);
+    m_ordersPage->setApiClient(m_api);
 
     m_portfolioGate = new AuthRequiredPage(
-    QStringLiteral("View your portfolio"),
-    this);
+        QStringLiteral("View your portfolio"),
+        this);
 
     m_ordersGate = new AuthRequiredPage(
         QStringLiteral("View your orders"),
@@ -173,6 +152,8 @@ MarketWindow::MarketWindow(QWidget *parent)
         this);
 
     m_markets->setObjectName(QStringLiteral("CenterPage"));
+    m_portfolioPage->setObjectName(QStringLiteral("CenterPage"));
+    m_ordersPage->setObjectName(QStringLiteral("CenterPage"));
     m_profile->setObjectName(QStringLiteral("CenterPage"));
     m_tradesPage->setObjectName(QStringLiteral("CenterPage"));
 
@@ -226,7 +207,7 @@ MarketWindow::MarketWindow(QWidget *parent)
     });
 
     connect(m_marketDetailsPage, &MarketDetailsPage::loginRequested, this, [this]() {
-    showSection(QStringLiteral("profile"));
+        showSection(QStringLiteral("profile"));
     });
 
     connect(m_portfolioGate, &AuthRequiredPage::loginRequested, this, &MarketWindow::openLoginDialog);
@@ -238,7 +219,11 @@ MarketWindow::MarketWindow(QWidget *parent)
     connect(m_profileGate, &AuthRequiredPage::loginRequested, this, &MarketWindow::openLoginDialog);
     connect(m_profileGate, &AuthRequiredPage::signUpRequested, this, &MarketWindow::openSignUpDialog);
 
-    connect(m_api, &MarketApiClient::marketsReady, m_markets, &MarketsPage::setMarkets);
+    connect(m_api, &MarketApiClient::marketsReady, this, [this](const QVector<ApiMarket> &markets) {
+        m_markets->setMarkets(markets);
+        m_portfolioPage->setMarkets(markets);
+        m_ordersPage->setMarkets(markets);
+    });
     connect(m_api, &MarketApiClient::marketsError, m_markets, &MarketsPage::setError);
     connect(m_api, &MarketApiClient::walletReady, this, &MarketWindow::onWalletLoaded);
     connect(m_api, &MarketApiClient::walletError, this, &MarketWindow::onWalletError);
@@ -310,14 +295,6 @@ void MarketWindow::showSection(const QString &pageId) {
     m_sidebar->setCurrentPage(pageId);
 }
 
-QString formatDateTimeReadable(const QString &value) {
-    const QDateTime dt = QDateTime::fromString(value, Qt::ISODate);
-    if (!dt.isValid()) {
-        return value;
-    }
-    return dt.toLocalTime().toString(QStringLiteral("dd MMM yyyy, HH:mm"));
-}
-
 void MarketWindow::onWalletLoaded(const ApiWallet &wallet) {
     const QString displayName =
         m_profileName.trimmed().isEmpty() ? wallet.userId : m_profileName;
@@ -325,13 +302,14 @@ void MarketWindow::onWalletLoaded(const ApiWallet &wallet) {
     m_profile->setUserName(displayName);
     m_profile->setWalletAmounts(wallet.available, wallet.reserved);
     m_profile->setStatusMessage(
-     wallet.updatedAt.isEmpty()
-         ? QStringLiteral("Wallet loaded successfully.")
-         : QStringLiteral("Last wallet update: %1")
-               .arg(formatDateTimeReadable(wallet.updatedAt)));
+        wallet.updatedAt.isEmpty()
+            ? QStringLiteral("Wallet loaded successfully.")
+            : QStringLiteral("Last wallet update: %1")
+                  .arg(formatDateTimeReadable(wallet.updatedAt)));
 
     m_header->setBalanceText(QStringLiteral("Balance: %1").arg(formatUnits(wallet.available)));
     m_header->setAvatarText(initialsFromName(displayName));
+
     m_sidebar->setStatusText(QStringLiteral("Status: connected"));
 }
 
