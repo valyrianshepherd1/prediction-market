@@ -31,6 +31,10 @@ public:
                     std::function<void(std::vector<TradeRow>)> onOk,
                     std::function<void(const drogon::orm::DrogonDbException &)> onErr) const;
 
+    void listByOrder(const std::string &orderId,
+                     std::function<void(std::vector<TradeRow>)> onOk,
+                     std::function<void(const drogon::orm::DrogonDbException &)> onErr) const;
+
 private:
     drogon::orm::DbClientPtr db_;
 };

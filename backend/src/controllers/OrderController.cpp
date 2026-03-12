@@ -1,9 +1,13 @@
 #include "pm/controllers/OrderController.h"
 
 #include "pm/repositories/OrderRepository.h"
+#include "pm/repositories/TradeRepository.h"
 #include "pm/services/OrderService.h"
+#include "pm/services/TradeService.h"
 #include "pm/util/ApiError.h"
 #include "pm/util/AuthGuard.h"
+#include "pm/util/JsonSerializers.h"
+#include "pm/ws/RealtimePublisher.h"
 
 #include <drogon/drogon.h>
 #include <memory>
@@ -29,30 +33,6 @@ namespace {
         auto resp = HttpResponse::newHttpJsonResponse(j);
         resp->setStatusCode(code);
         return resp;
-    }
-
-    Json::Value orderToJson(const OrderRow &o) {
-        Json::Value j;
-        j["id"] = o.id;
-        j["user_id"] = o.user_id;
-        j["outcome_id"] = o.outcome_id;
-        j["side"] = o.side;
-        j["price_bp"] = o.price_bp;
-        j["qty_total_micros"] = Json::Int64(o.qty_total_micros);
-        j["qty_remaining_micros"] = Json::Int64(o.qty_remaining_micros);
-        j["status"] = o.status;
-        j["created_at"] = o.created_at;
-        j["updated_at"] = o.updated_at;
-        return j;
-    }
-
-    Json::Value orderBookToJson(const OrderBook &b) {
-        Json::Value j;
-        j["buy"] = Json::arrayValue;
-        j["sell"] = Json::arrayValue;
-        for (const auto &o: b.buy) j["buy"].append(orderToJson(o));
-        for (const auto &o: b.sell) j["sell"].append(orderToJson(o));
-        return j;
     }
 } // namespace
 
@@ -81,8 +61,22 @@ void OrderController::createOrder(const drogon::HttpRequestPtr &req,
             OrderService svc{OrderRepository{db}};
             svc.createOrder(
                 principal.user_id, outcomeId, side, priceBp, qtyMicros,
-                [cbp](OrderRow created) {
-                    auto resp = HttpResponse::newHttpJsonResponse(orderToJson(created));
+                [cbp, db](OrderRow created) {
+                    pm::ws::publishOrderLifecycle(db, created, "order_created");
+
+                    TradeService tradeSvc{TradeRepository{db}};
+                    tradeSvc.listTradesForOrder(
+                        created.id,
+                        [db](std::vector<TradeRow> trades) {
+                            for (const auto &trade: trades) {
+                                pm::ws::publishTradeExecution(db, trade);
+                            }
+                        },
+                        [](const drogon::orm::DrogonDbException &) {
+                            // Best effort: the order is already persisted.
+                        });
+
+                    auto resp = HttpResponse::newHttpJsonResponse(pm::json::toJson(created));
                     resp->setStatusCode(drogon::k201Created);
                     (*cbp)(resp);
                 },
@@ -118,7 +112,7 @@ void OrderController::getOrderBook(const drogon::HttpRequestPtr &req,
     svc.getOrderBook(
         outcomeId, depth,
         [cbp](OrderBook b) {
-            (*cbp)(HttpResponse::newHttpJsonResponse(orderBookToJson(b)));
+            (*cbp)(HttpResponse::newHttpJsonResponse(pm::json::toJson(b)));
         },
         [cbp](const drogon::orm::DrogonDbException &e) {
             (*cbp)(jsonError(drogon::k503ServiceUnavailable, e.base().what()));
@@ -141,7 +135,7 @@ void OrderController::getOrder(const drogon::HttpRequestPtr &req,
             svc.getOrderForUser(
                 principal.user_id, orderId,
                 [cbp](OrderRow o) {
-                    (*cbp)(HttpResponse::newHttpJsonResponse(orderToJson(o)));
+                    (*cbp)(HttpResponse::newHttpJsonResponse(pm::json::toJson(o)));
                 },
                 [cbp](const pm::ApiError &e) {
                     auto [code, msg] = e;
@@ -181,7 +175,7 @@ void OrderController::listMyOrders(const drogon::HttpRequestPtr &req,
                 principal.user_id, status, limit, offset,
                 [cbp](std::vector<OrderRow> orders) {
                     Json::Value arr = Json::arrayValue;
-                    for (const auto &o: orders) arr.append(orderToJson(o));
+                    for (const auto &o: orders) arr.append(pm::json::toJson(o));
                     (*cbp)(HttpResponse::newHttpJsonResponse(arr));
                 },
                 [cbp](const drogon::orm::DrogonDbException &e) {
@@ -209,8 +203,9 @@ void OrderController::cancelOrder(const drogon::HttpRequestPtr &req,
             OrderService svc{OrderRepository{db}};
             svc.cancelOrderForUser(
                 principal.user_id, orderId,
-                [cbp](OrderRow o) {
-                    (*cbp)(HttpResponse::newHttpJsonResponse(orderToJson(o)));
+                [cbp, db](OrderRow o) {
+                    pm::ws::publishOrderLifecycle(db, o, "order_canceled");
+                    (*cbp)(HttpResponse::newHttpJsonResponse(pm::json::toJson(o)));
                 },
                 [cbp](const pm::ApiError &e) {
                     auto [code, msg] = e;

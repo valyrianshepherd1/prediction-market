@@ -109,33 +109,53 @@ void OrderRepository::createOrderWithReservation(const std::string &userId,
                                                  std::function<void(OrderRow)> onOk,
                                                  std::function<void(const pm::ApiError &)> onBizErr,
                                                  std::function<void(const DrogonDbException &)> onErr) const {
-    struct Ctx {
-        TransactionPtr tx;
-        std::string userId;
-        std::string outcomeId;
-        std::string side;
-        int priceBp{};
-        std::int64_t qtyMicros{};
+    struct Completion {
         std::function<void(OrderRow)> onOk;
         std::function<void(const pm::ApiError &)> onBizErr;
         std::function<void(const DrogonDbException &)> onErr;
         OrderRow created;
     };
 
+    struct Ctx {
+        TransactionPtr tx;
+        std::shared_ptr<Completion> completion;
+        std::string userId;
+        std::string outcomeId;
+        std::string side;
+        int priceBp{};
+        std::int64_t qtyMicros{};
+    };
+
+    auto completion = std::make_shared<Completion>(
+        Completion{std::move(onOk), std::move(onBizErr), std::move(onErr), {}});
+
     auto ctx = std::make_shared<Ctx>(
-        Ctx{nullptr, userId, outcomeId, side, priceBp, qtyMicros, std::move(onOk), std::move(onBizErr), std::move(onErr), {}});
+        Ctx{nullptr, completion, userId, outcomeId, side, priceBp, qtyMicros});
 
     db_->newTransactionAsync([ctx](const TransactionPtr &tx) {
+        if (!tx) {
+            return ctx->completion->onBizErr(
+                {drogon::k503ServiceUnavailable, "db transaction unavailable"});
+        }
+
         ctx->tx = tx;
+        ctx->tx->setCommitCallback([completion = ctx->completion](bool committed) {
+            if (committed) {
+                completion->onOk(completion->created);
+            } else {
+                completion->onBizErr(
+                    {drogon::k503ServiceUnavailable, "transaction commit failed"});
+            }
+        });
 
         auto dbFail = [ctx](const DrogonDbException &e) mutable {
             if (ctx->tx) ctx->tx->rollback();
-            ctx->onErr(e);
+            ctx->completion->onErr(e);
         };
 
         auto bizFail = [ctx](drogon::HttpStatusCode code, std::string msg) mutable {
             if (ctx->tx) ctx->tx->rollback();
-            ctx->onBizErr({code, std::move(msg)});
+            ctx->completion->onBizErr({code, std::move(msg)});
         };
 
         if (!(ctx->side == "BUY" || ctx->side == "SELL"))
@@ -167,7 +187,7 @@ void OrderRepository::createOrderWithReservation(const std::string &userId,
                     std::string(kInsert),
                     [ctx, bizFail, dbFail](const Result &ins) mutable {
                         if (ins.empty()) return bizFail(drogon::k500InternalServerError, "failed to create order");
-                        ctx->created = rowToOrder(ins, 0);
+                        ctx->completion->created = rowToOrder(ins, 0);
 
                         const bool takerIsBuy = (ctx->side == "BUY");
 
@@ -175,7 +195,7 @@ void OrderRepository::createOrderWithReservation(const std::string &userId,
                             // 4) MATCH after reservation (both BUY and SELL)
                             matchTakerCompat(
                                 ctx->tx,
-                                ctx->created.id,
+                                ctx->completion->created.id,
                                 ctx->userId,
                                 ctx->outcomeId,
                                 ctx->side,
@@ -189,16 +209,16 @@ void OrderRepository::createOrderWithReservation(const std::string &userId,
                                         "created_at::text AS created_at, updated_at::text AS updated_at "
                                         "FROM orders WHERE id = $1::uuid",
                                         [ctx](const Result &r) mutable {
-                                            if (!r.empty()) ctx->created = rowToOrder(r, 0);
-                                            ctx->onOk(std::move(ctx->created));
+                                            if (!r.empty()) ctx->completion->created = rowToOrder(r, 0);
+                                            ctx->tx.reset();
                                         },
                                         dbFail,
-                                        ctx->created.id);
+                                        ctx->completion->created.id);
                                 },
                                 dbFail,
                                 [ctx](drogon::HttpStatusCode code, std::string msg) mutable {
                                     if (ctx->tx) ctx->tx->rollback();
-                                    ctx->onBizErr({code, std::move(msg)});
+                                    ctx->completion->onBizErr({code, std::move(msg)});
                                 });
                         };
 
@@ -228,7 +248,7 @@ void OrderRepository::createOrderWithReservation(const std::string &userId,
                                                 ctx->userId,
                                                 static_cast<long long>(-reserve),
                                                 static_cast<long long>(reserve),
-                                                ctx->created.id);
+                                                ctx->completion->created.id);
                                         },
                                         dbFail,
                                         ctx->userId,
@@ -257,7 +277,7 @@ void OrderRepository::createOrderWithReservation(const std::string &userId,
                                                 ctx->outcomeId,
                                                 static_cast<long long>(-ctx->qtyMicros),
                                                 static_cast<long long>(ctx->qtyMicros),
-                                                ctx->created.id);
+                                                ctx->completion->created.id);
                                         },
                                         dbFail,
                                         ctx->userId,
@@ -311,15 +331,21 @@ void OrderRepository::getOrderBook(const std::string &outcomeId,
         "ORDER BY price_bp ASC, created_at, id "
         "LIMIT $2::int";
 
-    db_->execSqlAsync(std::string(kSelectBuy),
-        [this, ctx, outcomeId, depth](const Result &r) {
-            ctx->book.buy.reserve(r.size());
-            for (std::size_t i = 0; i < r.size(); ++i) ctx->book.buy.push_back(rowToOrder(r, i));
+    auto db = db_;
 
-            db_->execSqlAsync(std::string(kSelectSell),
+    db->execSqlAsync(std::string(kSelectBuy),
+        [db, ctx, outcomeId, depth](const Result &r) {
+            ctx->book.buy.reserve(r.size());
+            for (std::size_t i = 0; i < r.size(); ++i) {
+                ctx->book.buy.push_back(rowToOrder(r, i));
+            }
+
+            db->execSqlAsync(std::string(kSelectSell),
                 [ctx](const Result &r2) {
                     ctx->book.sell.reserve(r2.size());
-                    for (std::size_t i = 0; i < r2.size(); ++i) ctx->book.sell.push_back(rowToOrder(r2, i));
+                    for (std::size_t i = 0; i < r2.size(); ++i) {
+                        ctx->book.sell.push_back(rowToOrder(r2, i));
+                    }
                     ctx->onOk(std::move(ctx->book));
                 },
                 ctx->onErr,

@@ -5,6 +5,8 @@
 #include "pm/util/ApiError.h"
 #include "pm/util/AuthGuard.h"
 #include "pm/util/Expected.h"
+#include "pm/util/JsonSerializers.h"
+#include "pm/ws/MarketRealtimePublisher.h"
 
 #include <charconv>
 #include <cctype>
@@ -25,16 +27,6 @@ using ResponseCallback = std::function<void(const drogon::HttpResponsePtr &)>;
 template <typename T>
 using Expected = pm::expected<T, ApiError>;
 
-[[nodiscard]] Json::Value marketToJson(const MarketRow &m) {
-    Json::Value j;
-    j["id"] = m.id;
-    j["question"] = m.question;
-    j["status"] = m.status;
-    j["resolved_outcome_id"] =
-        m.resolved_outcome_id ? Json::Value(*m.resolved_outcome_id) : Json::Value(Json::nullValue);
-    j["created_at"] = m.created_at;
-    return j;
-}
 
 [[nodiscard]] Expected<int> parseInt(std::string_view s,
                                      int minV,
@@ -223,25 +215,6 @@ constexpr std::string_view kAllowedStatuses[] = {
     return titles;
 }
 
-[[nodiscard]] Json::Value outcomeToJson(const OutcomeRow &o) {
-    Json::Value j;
-    j["id"] = o.id;
-    j["market_id"] = o.market_id;
-    j["title"] = o.title;
-    j["outcome_index"] = o.outcome_index;
-    return j;
-}
-
-[[nodiscard]] Json::Value marketWithOutcomesToJson(const MarketRow &m,
-                                                   const std::vector<OutcomeRow> &outs) {
-    Json::Value j = marketToJson(m);
-    Json::Value arr(Json::arrayValue);
-    for (const auto &o : outs) {
-        arr.append(outcomeToJson(o));
-    }
-    j["outcomes"] = std::move(arr);
-    return j;
-}
 
 struct MarketPatchRequest {
     std::optional<std::string> question;
@@ -322,7 +295,7 @@ void MarketController::listMarkets(
         [cbp](std::vector<MarketRow> rows) {
             Json::Value arr(Json::arrayValue);
             for (const auto &r : rows) {
-                arr.append(marketToJson(r));
+                arr.append(pm::json::toJson(r));
             }
             auto resp = HttpResponse::newHttpJsonResponse(arr);
             resp->setStatusCode(drogon::k200OK);
@@ -352,7 +325,7 @@ void MarketController::getMarket(
                 return (*cbp)(pm::jsonError({drogon::k404NotFound, "market not found"}));
             }
 
-            auto resp = HttpResponse::newHttpJsonResponse(marketToJson(*row));
+            auto resp = HttpResponse::newHttpJsonResponse(pm::json::toJson(*row));
             resp->setStatusCode(drogon::k200OK);
             (*cbp)(resp);
         },
@@ -389,8 +362,10 @@ void MarketController::createMarket(
                 question.value(),
                 outcomeTitles.value(),
                 [cbp](MarketRow created, std::vector<OutcomeRow> outcomes) {
+                    pm::ws::publishMarketLifecycle(created, outcomes, "created");
+
                     auto resp = HttpResponse::newHttpJsonResponse(
-                        marketWithOutcomesToJson(created, outcomes));
+                        pm::json::toJsonWithOutcomes(created, outcomes));
                     resp->setStatusCode(drogon::k201Created);
                     (*cbp)(resp);
                 },
@@ -453,8 +428,10 @@ void MarketController::updateMarket(
                                     {drogon::k404NotFound, "market not found"}));
                             }
 
+                            pm::ws::publishMarketLifecycle(*updated, "updated");
+
                             auto resp =
-                                HttpResponse::newHttpJsonResponse(marketToJson(*updated));
+                                HttpResponse::newHttpJsonResponse(pm::json::toJson(*updated));
                             resp->setStatusCode(drogon::k200OK);
                             (*cbp)(resp);
                         },
@@ -508,7 +485,7 @@ void MarketController::closeMarket(
                     }
 
                     if (row->status == "CLOSED") {
-                        auto resp = HttpResponse::newHttpJsonResponse(marketToJson(*row));
+                        auto resp = HttpResponse::newHttpJsonResponse(pm::json::toJson(*row));
                         resp->setStatusCode(drogon::k200OK);
                         return (*cbp)(resp);
                     }
@@ -523,8 +500,10 @@ void MarketController::closeMarket(
                                     {drogon::k404NotFound, "market not found"}));
                             }
 
+                            pm::ws::publishMarketLifecycle(*updated, "closed");
+
                             auto resp =
-                                HttpResponse::newHttpJsonResponse(marketToJson(*updated));
+                                HttpResponse::newHttpJsonResponse(pm::json::toJson(*updated));
                             resp->setStatusCode(drogon::k200OK);
                             (*cbp)(resp);
                         },
@@ -561,7 +540,7 @@ void MarketController::listOutcomes(
         [cbp](std::vector<OutcomeRow> outs) mutable {
             Json::Value arr(Json::arrayValue);
             for (const auto &o : outs) {
-                arr.append(outcomeToJson(o));
+                arr.append(pm::json::toJson(o));
             }
 
             auto resp = drogon::HttpResponse::newHttpJsonResponse(arr);
@@ -644,8 +623,10 @@ void MarketController::resolveMarket(
                         winningOutcomeId,
                         adminUserId,
                         [cbp](MarketRow updated) mutable {
+                            pm::ws::publishMarketLifecycle(updated, "resolved");
+
                             auto resp = drogon::HttpResponse::newHttpJsonResponse(
-                                marketToJson(updated));
+                                pm::json::toJson(updated));
                             resp->setStatusCode(drogon::k200OK);
                             (*cbp)(resp);
                         },
@@ -694,7 +675,7 @@ void MarketController::archiveMarket(
                     }
 
                     if (row->status == "ARCHIVED") {
-                        auto resp = HttpResponse::newHttpJsonResponse(marketToJson(*row));
+                        auto resp = HttpResponse::newHttpJsonResponse(pm::json::toJson(*row));
                         resp->setStatusCode(drogon::k200OK);
                         return (*cbp)(resp);
                     }
@@ -702,7 +683,9 @@ void MarketController::archiveMarket(
                     svc->archiveMarket(
                         row->id,
                         [cbp](MarketRow updated) mutable {
-                            auto resp = HttpResponse::newHttpJsonResponse(marketToJson(updated));
+                            pm::ws::publishMarketLifecycle(updated, "archived");
+
+                            auto resp = HttpResponse::newHttpJsonResponse(pm::json::toJson(updated));
                             resp->setStatusCode(drogon::k200OK);
                             (*cbp)(resp);
                         },

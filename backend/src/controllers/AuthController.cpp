@@ -4,6 +4,7 @@
 #include "pm/services/AuthService.h"
 #include "pm/util/ApiError.h"
 #include "pm/util/AuthGuard.h"
+#include "pm/util/JsonSerializers.h"
 
 #include <charconv>
 #include <cstdlib>
@@ -79,39 +80,6 @@ int accessTtlMinutes() {
     }
     return out;
 }
-
-Json::Value userToJson(const AuthUserRow &u) {
-    Json::Value j;
-    j["id"] = u.id;
-    j["email"] = u.email;
-    j["username"] = u.username;
-    j["role"] = u.role;
-    j["created_at"] = u.created_at;
-    return j;
-}
-
-Json::Value principalToJson(const pm::auth::Principal &u) {
-    Json::Value j;
-    j["id"] = u.user_id;
-    j["email"] = u.email;
-    j["username"] = u.username;
-    j["role"] = u.role;
-    j["created_at"] = u.created_at;
-    return j;
-}
-
-Json::Value sessionToJson(const AuthSessionRow &s) {
-    Json::Value j;
-    j["session_id"] = s.session_id;
-    j["user"] = userToJson(s.user);
-    j["token_type"] = "Bearer";
-    j["access_token"] = s.access_token;
-    j["access_expires_at"] = s.access_expires_at;
-    j["refresh_token"] = s.refresh_token;
-    j["refresh_expires_at"] = s.refresh_expires_at;
-    return j;
-}
-
 HttpResponsePtr jsonOk(const Json::Value &j, drogon::HttpStatusCode code = drogon::k200OK) {
     auto resp = HttpResponse::newHttpJsonResponse(j);
     resp->setStatusCode(code);
@@ -150,7 +118,7 @@ void AuthController::registerUser(const drogon::HttpRequestPtr &req,
         accessTtlMinutes(),
         refreshTtlDays(),
         [cbp](AuthSessionRow session) {
-            (*cbp)(jsonOk(sessionToJson(session), drogon::k201Created));
+            (*cbp)(jsonOk(pm::json::toJson(session), drogon::k201Created));
         },
         [cbp](const pm::ApiError &e) {
             (*cbp)(pm::jsonError(e));
@@ -192,7 +160,7 @@ void AuthController::login(const drogon::HttpRequestPtr &req,
         accessTtlMinutes(),
         refreshTtlDays(),
         [cbp](AuthSessionRow session) {
-            (*cbp)(jsonOk(sessionToJson(session)));
+            (*cbp)(jsonOk(pm::json::toJson(session)));
         },
         [cbp](const pm::ApiError &e) {
             (*cbp)(pm::jsonError(e));
@@ -228,7 +196,7 @@ void AuthController::refresh(const drogon::HttpRequestPtr &req,
         accessTtlMinutes(),
         refreshTtlDays(),
         [cbp](AuthSessionRow session) {
-            (*cbp)(jsonOk(sessionToJson(session)));
+            (*cbp)(jsonOk(pm::json::toJson(session)));
         },
         [cbp](const pm::ApiError &e) {
             (*cbp)(pm::jsonError(e));
@@ -278,7 +246,7 @@ void AuthController::me(const drogon::HttpRequestPtr &req,
     pm::auth::requireAuthenticatedUser(
         req,
         [cbp](pm::auth::Principal principal) {
-            auto resp = HttpResponse::newHttpJsonResponse(principalToJson(principal));
+            auto resp = HttpResponse::newHttpJsonResponse(pm::json::toJson(principal));
             resp->setStatusCode(drogon::k200OK);
             (*cbp)(resp);
         },

@@ -4,6 +4,7 @@
 #include "pm/services/PortfolioService.h"
 #include "pm/util/ApiError.h"
 #include "pm/util/AuthGuard.h"
+#include "pm/util/JsonSerializers.h"
 
 #include <charconv>
 #include <memory>
@@ -37,40 +38,6 @@ bool parseInt(std::string_view s, int &out) {
     out = v;
     return true;
 }
-
-Json::Value positionToJson(const PortfolioPositionRow &p) {
-    Json::Value j;
-    j["user_id"] = p.user_id;
-    j["outcome_id"] = p.outcome_id;
-    j["market_id"] = p.market_id;
-    j["market_question"] = p.market_question;
-    j["outcome_title"] = p.outcome_title;
-    j["outcome_index"] = p.outcome_index;
-    j["shares_available"] = Json::Int64(p.shares_available);
-    j["shares_reserved"] = Json::Int64(p.shares_reserved);
-    j["shares_total"] = Json::Int64(p.shares_available + p.shares_reserved);
-    j["updated_at"] = p.updated_at;
-    return j;
-}
-
-Json::Value ledgerToJson(const PortfolioLedgerEntryRow &e) {
-    Json::Value j;
-    j["id"] = e.id;
-    j["ledger_type"] = e.ledger_type;
-    j["kind"] = e.kind;
-    if (!e.outcome_id.empty()) {
-        j["outcome_id"] = e.outcome_id;
-    } else {
-        j["outcome_id"] = Json::nullValue;
-    }
-    j["delta_available"] = Json::Int64(e.delta_available);
-    j["delta_reserved"] = Json::Int64(e.delta_reserved);
-    j["ref_type"] = e.ref_type;
-    j["ref_id"] = e.ref_id;
-    j["created_at"] = e.created_at;
-    return j;
-}
-
 }  // namespace
 
 void PortfolioController::listPortfolio(
@@ -109,7 +76,7 @@ void PortfolioController::listPortfolio(
                 [cbp](std::vector<PortfolioPositionRow> rows) {
                     Json::Value arr(Json::arrayValue);
                     for (const auto &row : rows) {
-                        arr.append(positionToJson(row));
+                        arr.append(pm::json::toJson(row));
                     }
                     auto resp = HttpResponse::newHttpJsonResponse(arr);
                     resp->setStatusCode(drogon::k200OK);
@@ -161,7 +128,7 @@ void PortfolioController::listLedger(
                 [cbp](std::vector<PortfolioLedgerEntryRow> rows) {
                     Json::Value arr(Json::arrayValue);
                     for (const auto &row : rows) {
-                        arr.append(ledgerToJson(row));
+                        arr.append(pm::json::toJson(row));
                     }
                     auto resp = HttpResponse::newHttpJsonResponse(arr);
                     resp->setStatusCode(drogon::k200OK);
