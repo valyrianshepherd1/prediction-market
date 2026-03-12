@@ -1,56 +1,60 @@
 #include "pm/ws/TopicSnapshotPublisher.h"
 
+#include "pm/repositories/MarketRepository.h"
 #include "pm/repositories/OrderRepository.h"
 #include "pm/repositories/PortfolioRepository.h"
 #include "pm/repositories/TradeRepository.h"
 #include "pm/repositories/WalletRepository.h"
+#include "pm/util/JsonSerializers.h"
 #include "pm/ws/WsEnvelope.h"
 #include "pm/ws/WsHub.h"
 
 #include <json/json.h>
 
 #include <algorithm>
-#include <cstdint>
-#include <optional>
 #include <string>
 #include <string_view>
 #include <utility>
-#include <vector>
 
 namespace {
+    constexpr int kDefaultMarketsLimit = 50;
     constexpr int kDefaultOrderbookDepth = 50;
     constexpr int kDefaultTradesLimit = 50;
     constexpr int kDefaultUserPositionsLimit = 100;
     constexpr int kDefaultUserOrdersLimit = 100;
     constexpr int kMaxSnapshotPageSize = 200;
 
-    void sendEvent(const drogon::WebSocketConnectionPtr &connection,
-                   const std::string &event,
-                   const std::string &topic,
-                   const Json::Value &payload,
-                   bool snapshot = false) {
+    void sendSnapshotEvent(const drogon::WebSocketConnectionPtr &connection,
+                           const std::string &event,
+                           const std::string &topic,
+                           const Json::Value &payload) {
         if (!connection || !connection->connected()) {
             return;
         }
 
-        connection->send(pm::ws::stringifyJson(
-            pm::ws::makeEnvelope(
-                event,
-                payload,
-                topic,
-                pm::ws::makeMeta(pm::ws::WsHub::instance().currentTopicSeq(topic), snapshot))));
+        const auto envelope = pm::ws::makeEnvelope(
+            event,
+            payload,
+            topic,
+            pm::ws::makeMeta(pm::ws::WsHub::instance().currentTopicSeq(topic), true));
+        connection->send(pm::json::stringify(envelope));
     }
 
     void sendSystemError(const drogon::WebSocketConnectionPtr &connection,
                          const std::string &topic,
                          const std::string &message) {
-        Json::Value payload;
-        payload["message"] = message;
         if (!connection || !connection->connected()) {
             return;
         }
-        connection->send(pm::ws::stringifyJson(
-            pm::ws::makeEnvelope("system.error", payload, topic, pm::ws::makeMeta())));
+
+        Json::Value payload(Json::objectValue);
+        payload["message"] = message;
+        const auto envelope = pm::ws::makeEnvelope(
+            "system.error",
+            payload,
+            topic,
+            pm::ws::makeMeta());
+        connection->send(pm::json::stringify(envelope));
     }
 
     int clampLimit(const Json::Value &options,
@@ -70,65 +74,83 @@ namespace {
         return std::max(value, 0);
     }
 
-    Json::Value orderToJson(const OrderRow &o) {
-        Json::Value j;
-        j["id"] = o.id;
-        j["user_id"] = o.user_id;
-        j["outcome_id"] = o.outcome_id;
-        j["side"] = o.side;
-        j["price_bp"] = o.price_bp;
-        j["qty_total_micros"] = Json::Int64(o.qty_total_micros);
-        j["qty_remaining_micros"] = Json::Int64(o.qty_remaining_micros);
-        j["status"] = o.status;
-        j["created_at"] = o.created_at;
-        j["updated_at"] = o.updated_at;
-        return j;
-    }
-
-    Json::Value tradeToJson(const TradeRow &t) {
-        Json::Value j;
-        j["id"] = t.id;
-        j["outcome_id"] = t.outcome_id;
-        j["maker_user_id"] = t.maker_user_id;
-        j["taker_user_id"] = t.taker_user_id;
-        j["maker_order_id"] = t.maker_order_id;
-        j["taker_order_id"] = t.taker_order_id;
-        j["price_bp"] = t.price_bp;
-        j["qty_micros"] = Json::Int64(t.qty_micros);
-        j["created_at"] = t.created_at;
-        return j;
-    }
-
-    Json::Value walletToJson(const WalletRow &w) {
-        Json::Value j;
-        j["user_id"] = w.user_id;
-        j["available"] = Json::Int64(w.available);
-        j["reserved"] = Json::Int64(w.reserved);
-        j["updated_at"] = w.updated_at;
-        return j;
-    }
-
-    Json::Value positionToJson(const PortfolioPositionRow &p) {
-        Json::Value j;
-        j["user_id"] = p.user_id;
-        j["outcome_id"] = p.outcome_id;
-        j["market_id"] = p.market_id;
-        j["market_question"] = p.market_question;
-        j["outcome_title"] = p.outcome_title;
-        j["outcome_index"] = p.outcome_index;
-        j["shares_available"] = Json::Int64(p.shares_available);
-        j["shares_reserved"] = Json::Int64(p.shares_reserved);
-        j["shares_total"] = Json::Int64(p.shares_available + p.shares_reserved);
-        j["updated_at"] = p.updated_at;
-        return j;
-    }
-
     std::string suffixAfterPrefix(const std::string &topic,
                                   std::string_view prefix) {
         if (topic.rfind(prefix, 0) != 0 || topic.size() == prefix.size()) {
             return {};
         }
         return topic.substr(prefix.size());
+    }
+
+    void sendMarketsSnapshot(const drogon::WebSocketConnectionPtr &connection,
+                             const drogon::orm::DbClientPtr &db,
+                             const std::string &topic,
+                             const Json::Value &options) {
+        const int limit = clampLimit(options, "limit", kDefaultMarketsLimit);
+        const int offset = clampOffset(options, "offset");
+
+        std::optional<std::string> status;
+        if (options.isMember("status") && options["status"].isString()) {
+            const auto statusValue = options["status"].asString();
+            if (!statusValue.empty()) {
+                status = statusValue;
+            }
+        }
+
+        MarketRepository{db}.listMarkets(
+            status,
+            limit,
+            offset,
+            [connection, topic, limit, offset, status](std::vector<MarketRow> rows) {
+                Json::Value payload(Json::objectValue);
+                payload["limit"] = limit;
+                payload["offset"] = offset;
+                payload["status"] = status ? Json::Value(*status) : Json::Value(Json::nullValue);
+                payload["items"] = Json::arrayValue;
+                for (const auto &row : rows) {
+                    payload["items"].append(pm::json::toJson(row));
+                }
+                sendSnapshotEvent(connection, "markets.snapshot", topic, payload);
+            },
+            [connection, topic](const drogon::orm::DrogonDbException &e) {
+                sendSystemError(connection, topic, e.base().what());
+            });
+    }
+
+    void sendMarketSnapshot(const drogon::WebSocketConnectionPtr &connection,
+                            const drogon::orm::DbClientPtr &db,
+                            const std::string &topic,
+                            const Json::Value &) {
+        const auto marketId = suffixAfterPrefix(topic, "market:");
+        if (marketId.empty()) {
+            sendSystemError(connection, topic, "market snapshot requires market:<market_id>");
+            return;
+        }
+
+        MarketRepository{db}.getMarketById(
+            marketId,
+            [connection, db, topic, marketId](std::optional<MarketRow> market) {
+                if (!market) {
+                    sendSystemError(connection, topic, "market not found");
+                    return;
+                }
+
+                MarketRepository{db}.listOutcomesByMarketId(
+                    marketId,
+                    [connection, topic, market = std::move(*market)](std::vector<OutcomeRow> outcomes) mutable {
+                        sendSnapshotEvent(
+                            connection,
+                            "market.snapshot",
+                            topic,
+                            pm::json::toJsonWithOutcomes(market, outcomes));
+                    },
+                    [connection, topic](const drogon::orm::DrogonDbException &e) {
+                        sendSystemError(connection, topic, e.base().what());
+                    });
+            },
+            [connection, topic](const drogon::orm::DrogonDbException &e) {
+                sendSystemError(connection, topic, e.base().what());
+            });
     }
 
     void sendOrderbookSnapshot(const drogon::WebSocketConnectionPtr &connection,
@@ -146,17 +168,9 @@ namespace {
             outcomeId,
             depth,
             [connection, topic, depth](OrderBook book) {
-                Json::Value payload;
+                Json::Value payload = pm::json::toJson(book);
                 payload["depth"] = depth;
-                payload["buy"] = Json::arrayValue;
-                payload["sell"] = Json::arrayValue;
-                for (const auto &row: book.buy) {
-                    payload["buy"].append(orderToJson(row));
-                }
-                for (const auto &row: book.sell) {
-                    payload["sell"].append(orderToJson(row));
-                }
-                sendEvent(connection, "orderbook.snapshot", topic, payload, true);
+                sendSnapshotEvent(connection, "orderbook.snapshot", topic, payload);
             },
             [connection, topic](const drogon::orm::DrogonDbException &e) {
                 sendSystemError(connection, topic, e.base().what());
@@ -180,14 +194,14 @@ namespace {
             limit,
             offset,
             [connection, topic, limit, offset](std::vector<TradeRow> rows) {
-                Json::Value payload;
+                Json::Value payload(Json::objectValue);
                 payload["limit"] = limit;
                 payload["offset"] = offset;
                 payload["items"] = Json::arrayValue;
-                for (const auto &row: rows) {
-                    payload["items"].append(tradeToJson(row));
+                for (const auto &row : rows) {
+                    payload["items"].append(pm::json::toJson(row));
                 }
-                sendEvent(connection, "trades.snapshot", topic, payload, true);
+                sendSnapshotEvent(connection, "trades.snapshot", topic, payload);
             },
             [connection, topic](const drogon::orm::DrogonDbException &e) {
                 sendSystemError(connection, topic, e.base().what());
@@ -226,25 +240,25 @@ namespace {
                             ordersOffset,
                             [connection, topic, userId, wallet = std::move(wallet), positions = std::move(positions), positionsLimit,
                              positionsOffset, ordersLimit, ordersOffset](std::vector<OrderRow> orders) mutable {
-                                Json::Value payload;
+                                Json::Value payload(Json::objectValue);
                                 payload["user_id"] = userId;
-                                payload["wallet"] = wallet ? walletToJson(*wallet) : Json::Value(Json::nullValue);
+                                payload["wallet"] = wallet ? pm::json::toJson(*wallet) : Json::Value(Json::nullValue);
 
                                 payload["positions"] = Json::arrayValue;
-                                for (const auto &row: positions) {
-                                    payload["positions"].append(positionToJson(row));
+                                for (const auto &row : positions) {
+                                    payload["positions"].append(pm::json::toJson(row));
                                 }
                                 payload["positions_limit"] = positionsLimit;
                                 payload["positions_offset"] = positionsOffset;
 
                                 payload["open_orders"] = Json::arrayValue;
-                                for (const auto &row: orders) {
-                                    payload["open_orders"].append(orderToJson(row));
+                                for (const auto &row : orders) {
+                                    payload["open_orders"].append(pm::json::toJson(row));
                                 }
                                 payload["open_orders_limit"] = ordersLimit;
                                 payload["open_orders_offset"] = ordersOffset;
 
-                                sendEvent(connection, "user.snapshot", topic, payload, true);
+                                sendSnapshotEvent(connection, "user.snapshot", topic, payload);
                             },
                             [connection, topic](const drogon::orm::DrogonDbException &e) {
                                 sendSystemError(connection, topic, e.base().what());
@@ -266,6 +280,17 @@ namespace pm::ws {
                            const std::string &topic,
                            const Json::Value &options) {
         if (!connection || !db) {
+            return;
+        }
+
+        if (topic == "markets") {
+            sendMarketsSnapshot(connection, db, topic, options);
+            return;
+        }
+
+        constexpr std::string_view marketPrefix = "market:";
+        if (topic.rfind(marketPrefix, 0) == 0) {
+            sendMarketSnapshot(connection, db, topic, options);
             return;
         }
 

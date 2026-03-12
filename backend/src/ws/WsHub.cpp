@@ -1,11 +1,11 @@
 #include "pm/ws/WsHub.h"
 
-#include "pm/ws/WsEnvelope.h"
-
 #include <algorithm>
 #include <cctype>
 #include <utility>
-#include <vector>
+
+#include "pm/util/JsonSerializers.h"
+#include "pm/ws/WsEnvelope.h"
 
 namespace pm::ws {
     namespace {
@@ -121,13 +121,91 @@ namespace pm::ws {
 
     std::uint64_t WsHub::currentTopicSeq(const std::string &topic) const {
         std::scoped_lock lock(mutex_);
+
         const auto normalizedTopic = normalizeTopic(topic, std::nullopt);
-        if (normalizedTopic.empty()) {
+        const auto it = topic_seq_.find(normalizedTopic);
+        if (it == topic_seq_.end()) {
             return 0;
         }
+        return it->second;
+    }
 
-        const auto it = topic_seq_.find(normalizedTopic);
-        return it == topic_seq_.end() ? 0 : it->second;
+    bool WsHub::replaySince(const drogon::WebSocketConnectionPtr &connection,
+                            const std::string &topic,
+                            std::uint64_t sinceSeq,
+                            std::size_t maxEvents,
+                            ReplayResult &result,
+                            std::string &error) const {
+        if (!connection) {
+            error = "connection is not available";
+            return false;
+        }
+
+        std::vector<std::string> messages;
+        messages.reserve(std::min(maxEvents, kMaxReplayEvents));
+
+        {
+            std::scoped_lock lock(mutex_);
+
+            const auto connIt = connections_.find(makeKey(connection));
+            if (connIt == connections_.end()) {
+                error = "connection is not registered";
+                return false;
+            }
+
+            const auto normalizedTopic = normalizeTopic(topic, connIt->second.principal);
+            if (!isAllowedTopic(normalizedTopic, connIt->second.principal, error)) {
+                return false;
+            }
+
+            if (connIt->second.topics.find(normalizedTopic) == connIt->second.topics.end()) {
+                error = "replay requires active subscription to the topic";
+                return false;
+            }
+
+            const auto seqIt = topic_seq_.find(normalizedTopic);
+            if (seqIt == topic_seq_.end()) {
+                result.current_seq = 0;
+                return true;
+            }
+
+            result.current_seq = seqIt->second;
+            const auto historyIt = topic_history_.find(normalizedTopic);
+            if (historyIt == topic_history_.end() || historyIt->second.empty()) {
+                return true;
+            }
+
+            const auto &history = historyIt->second;
+            if (history.front().seq > sinceSeq + 1 && result.current_seq > sinceSeq) {
+                result.gap_detected = true;
+            }
+
+            const auto replayLimit = std::min(maxEvents, kMaxReplayEvents);
+            for (const auto &entry : history) {
+                if (entry.seq <= sinceSeq) {
+                    continue;
+                }
+
+                if (messages.size() >= replayLimit) {
+                    result.truncated = true;
+                    break;
+                }
+
+                messages.push_back(entry.json);
+                result.last_replayed_seq = entry.seq;
+            }
+
+            result.replayed_count = messages.size();
+        }
+
+        for (const auto &json : messages) {
+            if (!connection->connected()) {
+                break;
+            }
+            connection->send(json);
+        }
+
+        return true;
     }
 
     void WsHub::publish(const std::string &topic,
@@ -140,34 +218,50 @@ namespace pm::ws {
 
         std::vector<drogon::WebSocketConnectionPtr> recipients;
         std::vector<ConnectionKey> staleKeys;
-        std::uint64_t seq = 0;
+        std::string json;
 
         {
             std::scoped_lock lock(mutex_);
-            seq = ++topic_seq_[normalizedTopic];
-
             auto topicIt = topic_index_.find(normalizedTopic);
-            if (topicIt != topic_index_.end()) {
-                for (auto it = topicIt->second.begin(); it != topicIt->second.end();) {
-                    auto connIt = connections_.find(*it);
-                    if (connIt == connections_.end()) {
-                        staleKeys.push_back(*it);
-                        it = topicIt->second.erase(it);
-                        continue;
-                    }
+            if (topicIt == topic_index_.end()) {
+                return;
+            }
 
-                    if (auto connection = connIt->second.connection.lock()) {
-                        recipients.push_back(std::move(connection));
-                        ++it;
-                    } else {
-                        staleKeys.push_back(*it);
-                        it = topicIt->second.erase(it);
-                    }
+            auto &seq = topic_seq_[normalizedTopic];
+            ++seq;
+
+            const auto envelope = pm::ws::makeEnvelope(
+                event,
+                payload,
+                normalizedTopic,
+                pm::ws::makeMeta(seq, false));
+            json = pm::json::stringify(envelope);
+
+            auto &history = topic_history_[normalizedTopic];
+            history.push_back(BufferedEvent{seq, json});
+            while (history.size() > kTopicHistorySize) {
+                history.pop_front();
+            }
+
+            for (auto it = topicIt->second.begin(); it != topicIt->second.end();) {
+                auto connIt = connections_.find(*it);
+                if (connIt == connections_.end()) {
+                    staleKeys.push_back(*it);
+                    it = topicIt->second.erase(it);
+                    continue;
                 }
 
-                if (topicIt->second.empty()) {
-                    topic_index_.erase(topicIt);
+                if (auto connection = connIt->second.connection.lock()) {
+                    recipients.push_back(std::move(connection));
+                    ++it;
+                } else {
+                    staleKeys.push_back(*it);
+                    it = topicIt->second.erase(it);
                 }
+            }
+
+            if (topicIt->second.empty()) {
+                topic_index_.erase(topicIt);
             }
 
             for (const auto key: staleKeys) {
@@ -178,13 +272,6 @@ namespace pm::ws {
         if (recipients.empty()) {
             return;
         }
-
-        const auto envelope = makeEnvelope(
-            event,
-            payload,
-            normalizedTopic,
-            makeMeta(seq));
-        const auto json = stringifyJson(envelope);
 
         for (const auto &connection: recipients) {
             if (connection && connection->connected()) {
@@ -216,6 +303,19 @@ namespace pm::ws {
         if (topic.empty()) {
             error = "topic must not be empty";
             return false;
+        }
+
+        if (topic == "markets") {
+            return true;
+        }
+
+        constexpr std::string_view marketPrefix = "market:";
+        if (topic.rfind(marketPrefix, 0) == 0) {
+            if (topic.size() == marketPrefix.size()) {
+                error = "market topic must contain a market id";
+                return false;
+            }
+            return true;
         }
 
         constexpr std::string_view orderbookPrefix = "orderbook:";
@@ -257,7 +357,7 @@ namespace pm::ws {
             return true;
         }
 
-        error = "unknown topic; expected orderbook:<outcome_id>, trades:<outcome_id>, user:<user_id|me>";
+        error = "unknown topic; expected markets, market:<market_id>, orderbook:<outcome_id>, trades:<outcome_id>, user:<user_id|me>";
         return false;
     }
 

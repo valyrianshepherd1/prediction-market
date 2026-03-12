@@ -151,15 +151,6 @@ Json::Value toJson(const PortfolioLedgerEntryRow &entry) {
     return j;
 }
 
-Json::Value makeWsEnvelope(std::string_view event,
-                           std::string_view topic,
-                           const Json::Value &payload) {
-    Json::Value envelope;
-    envelope["event"] = std::string(event);
-    envelope["topic"] = std::string(topic);
-    envelope["payload"] = payload;
-    return envelope;
-}
 
 std::string stringify(const Json::Value &value) {
     Json::StreamWriterBuilder builder;

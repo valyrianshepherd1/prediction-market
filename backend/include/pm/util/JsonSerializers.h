@@ -33,9 +33,6 @@ namespace pm::json {
     [[nodiscard]] Json::Value toJson(const PortfolioPositionRow &position);
     [[nodiscard]] Json::Value toJson(const PortfolioLedgerEntryRow &entry);
 
-    [[nodiscard]] Json::Value makeWsEnvelope(std::string_view event,
-                                             std::string_view topic,
-                                             const Json::Value &payload);
     [[nodiscard]] std::string stringify(const Json::Value &value);
 
 } // namespace pm::json

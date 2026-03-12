@@ -17,6 +17,5 @@ namespace pm::ws {
                              std::string_view topic = {},
                              const Json::Value &meta = Json::Value(Json::objectValue));
 
-    std::string stringifyJson(const Json::Value &value);
 
 } // namespace pm::ws

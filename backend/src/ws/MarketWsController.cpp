@@ -2,16 +2,17 @@
 
 #include "pm/util/ApiError.h"
 #include "pm/util/AuthGuard.h"
+#include "pm/util/JsonSerializers.h"
 #include "pm/ws/TopicSnapshotPublisher.h"
+#include "pm/ws/WsCommand.h"
 #include "pm/ws/WsEnvelope.h"
 #include "pm/ws/WsHub.h"
+#include "pm/ws/WsProtocol.h"
 
 #include <drogon/drogon.h>
 #include <json/json.h>
 
-#include <array>
-#include <memory>
-#include <optional>
+#include <cstddef>
 #include <string>
 #include <utility>
 
@@ -22,40 +23,26 @@ namespace {
                          const std::string &event,
                          const Json::Value &payload = Json::Value(Json::objectValue),
                          const std::string &topic = {}) {
-        if (!connection || !connection->connected()) {
-            return;
-        }
+        const auto envelope = pm::ws::makeEnvelope(event, payload, topic, pm::ws::makeMeta());
+        connection->send(pm::json::stringify(envelope));
+    }
 
-        connection->send(pm::ws::stringifyJson(
-            pm::ws::makeEnvelope(event, payload, topic, pm::ws::makeMeta())));
+    void sendSystemError(const drogon::WebSocketConnectionPtr &connection,
+                         const pm::ApiError &error,
+                         const std::string &topic = {}) {
+        Json::Value payload(Json::objectValue);
+        payload["code"] = static_cast<int>(error.code);
+        payload["message"] = error.message;
+        sendSystemEvent(connection, "system.error", payload, topic);
     }
 
     Json::Value subscriptionsPayload(const drogon::WebSocketConnectionPtr &connection) {
-        Json::Value payload;
+        Json::Value payload(Json::objectValue);
         payload["topics"] = Json::arrayValue;
         for (const auto &topic: pm::ws::WsHub::instance().subscriptions(connection)) {
             payload["topics"].append(topic);
         }
         return payload;
-    }
-
-    std::optional<Json::Value> parseObjectMessage(const std::string &message,
-                                                  std::string &error) {
-        Json::CharReaderBuilder builder;
-        std::string errs;
-        Json::Value root;
-        std::unique_ptr<Json::CharReader> reader(builder.newCharReader());
-        if (!reader->parse(message.data(), message.data() + message.size(), &root, &errs)) {
-            error = errs.empty() ? "invalid JSON" : errs;
-            return std::nullopt;
-        }
-
-        if (!root.isObject()) {
-            error = "message must be a JSON object";
-            return std::nullopt;
-        }
-
-        return root;
     }
 
     drogon::orm::DbClientPtr getDbOrNull(std::string &err) {
@@ -66,34 +53,46 @@ namespace {
             return nullptr;
         }
     }
+
+    void sendReplayResult(const drogon::WebSocketConnectionPtr &connection,
+                          const std::string &controlTopic,
+                          std::uint64_t sinceSeq,
+                          const pm::ws::WsHub::ReplayResult &result) {
+        Json::Value payload(Json::objectValue);
+        payload["since_seq"] = Json::UInt64(sinceSeq);
+        payload["current_seq"] = Json::UInt64(result.current_seq);
+        payload["replayed_count"] = Json::UInt64(result.replayed_count);
+        payload["gap_detected"] = result.gap_detected;
+        payload["truncated"] = result.truncated;
+        if (result.replayed_count > 0) {
+            payload["last_replayed_seq"] = Json::UInt64(result.last_replayed_seq);
+        } else {
+            payload["last_replayed_seq"] = Json::nullValue;
+        }
+        sendSystemEvent(connection, "system.replayed", payload, controlTopic);
+    }
+
+    bool resolveTopicOrSendError(const drogon::WebSocketConnectionPtr &connection,
+                                 const std::string &requestedTopic,
+                                 std::string &normalizedTopic) {
+        std::string error;
+        if (pm::ws::WsHub::instance().resolveTopic(connection, requestedTopic, normalizedTopic, error)) {
+            return true;
+        }
+
+        sendSystemError(connection, {drogon::k400BadRequest, error}, requestedTopic);
+        return false;
+    }
 } // namespace
 
 void MarketWsController::handleNewConnection(const drogon::HttpRequestPtr &request,
                                              const drogon::WebSocketConnectionPtr &connection) {
     pm::ws::WsHub::instance().registerConnection(connection);
-
-    Json::Value welcomePayload;
-    welcomePayload["message"] = "websocket connected";
-    welcomePayload["actions"] = Json::arrayValue;
-    for (const auto action: std::array{"subscribe", "unsubscribe", "list_topics", "ping", "snapshot"}) {
-        welcomePayload["actions"].append(action);
-    }
-    welcomePayload["topics"] = Json::arrayValue;
-    welcomePayload["topics"].append("orderbook:<outcome_id>");
-    welcomePayload["topics"].append("trades:<outcome_id>");
-    welcomePayload["topics"].append("user:<user_id|me>");
-    welcomePayload["subscribe_options"] = Json::objectValue;
-    welcomePayload["subscribe_options"]["with_snapshot"] = true;
-    welcomePayload["message_meta"] = Json::objectValue;
-    welcomePayload["message_meta"]["server_time_ms"] = "always";
-    welcomePayload["message_meta"]["seq"] = "for topic events and snapshots";
-    welcomePayload["message_meta"]["snapshot"] = "true for snapshot envelopes";
-    welcomePayload["max_message_size"] = static_cast<Json::UInt64>(kMaxClientMessageSize);
-    sendSystemEvent(connection, "system.welcome", welcomePayload);
+    sendSystemEvent(connection, "system.welcome", pm::ws::makeWelcomePayload());
 
     const auto authHeader = request->getHeader("Authorization");
     if (authHeader.empty()) {
-        Json::Value hint;
+        Json::Value hint(Json::objectValue);
         hint["message"] = "public topics are available immediately; private user:* topics require Authorization: Bearer <access_token> in the websocket handshake request";
         sendSystemEvent(connection, "system.auth.skipped", hint);
         return;
@@ -102,22 +101,20 @@ void MarketWsController::handleNewConnection(const drogon::HttpRequestPtr &reque
     pm::auth::requireAuthenticatedUser(
         request,
         [connection](pm::auth::Principal principal) {
-            Json::Value payload;
+            Json::Value payload(Json::objectValue);
             payload["user_id"] = principal.user_id;
             payload["role"] = principal.role;
             pm::ws::WsHub::instance().setPrincipal(connection, std::move(principal));
             sendSystemEvent(connection, "system.authenticated", payload);
         },
         [connection](const pm::ApiError &error) {
-            Json::Value payload;
+            Json::Value payload(Json::objectValue);
             payload["code"] = static_cast<int>(error.code);
             payload["message"] = error.message;
             sendSystemEvent(connection, "system.auth.failed", payload);
         },
         [connection](const drogon::orm::DrogonDbException &error) {
-            Json::Value payload;
-            payload["message"] = error.base().what();
-            sendSystemEvent(connection, "system.error", payload);
+            sendSystemError(connection, {drogon::k500InternalServerError, error.base().what()});
         });
 }
 
@@ -130,115 +127,141 @@ void MarketWsController::handleNewMessage(const drogon::WebSocketConnectionPtr &
     }
 
     if (type != drogon::WebSocketMessageType::Text) {
-        Json::Value payload;
-        payload["message"] = "only text JSON messages are supported";
-        sendSystemEvent(connection, "system.error", payload);
+        sendSystemError(connection, {drogon::k400BadRequest, "only text JSON messages are supported"});
         return;
     }
 
-    if (message.size() > kMaxClientMessageSize) {
-        Json::Value payload;
-        payload["message"] = "message too large";
-        payload["max_message_size"] = static_cast<Json::UInt64>(kMaxClientMessageSize);
-        sendSystemEvent(connection, "system.error", payload);
+    auto parsed = pm::ws::parseClientCommand(message, kMaxClientMessageSize);
+    if (!parsed) {
+        sendSystemError(connection, parsed.error());
         return;
     }
 
-    std::string parseError;
-    auto root = parseObjectMessage(message, parseError);
-    if (!root) {
-        Json::Value payload;
-        payload["message"] = parseError;
-        sendSystemEvent(connection, "system.error", payload);
-        return;
-    }
+    const auto &command = parsed.value();
+    switch (command.action) {
+        case pm::ws::ClientAction::Ping:
+            sendSystemEvent(connection, "system.pong");
+            return;
 
-    const auto action = (*root).get("action", "").asString();
-    if (action == "ping") {
-        sendSystemEvent(connection, "system.pong");
-        return;
-    }
+        case pm::ws::ClientAction::ListTopics:
+            sendSystemEvent(connection, "system.topics", subscriptionsPayload(connection));
+            return;
 
-    if (action == "list_topics") {
-        sendSystemEvent(connection, "system.topics", subscriptionsPayload(connection));
-        return;
-    }
+        case pm::ws::ClientAction::Describe: {
+            if (command.topic.empty()) {
+                sendSystemEvent(connection, "system.describe", pm::ws::makeDescribePayload());
+                return;
+            }
 
-    const auto topic = (*root).get("topic", "").asString();
-    if (topic.empty()) {
-        Json::Value payload;
-        payload["message"] = "topic is required";
-        sendSystemEvent(connection, "system.error", payload);
-        return;
-    }
-
-    if (action == "subscribe") {
-        std::string error;
-        if (!pm::ws::WsHub::instance().subscribe(connection, topic, error)) {
-            Json::Value payload;
-            payload["message"] = error;
-            sendSystemEvent(connection, "system.error", payload, topic);
+            std::string normalizedTopic;
+            if (!resolveTopicOrSendError(connection, command.topic, normalizedTopic)) {
+                return;
+            }
+            sendSystemEvent(
+                connection,
+                "system.describe",
+                pm::ws::makeDescribePayloadForTopic(command.topic, normalizedTopic),
+                command.topic);
             return;
         }
 
-        sendSystemEvent(connection, "system.subscribed", subscriptionsPayload(connection), topic);
+        case pm::ws::ClientAction::Subscribe: {
+            std::string error;
+            if (!pm::ws::WsHub::instance().subscribe(connection, command.topic, error)) {
+                sendSystemError(connection, {drogon::k400BadRequest, error}, command.topic);
+                return;
+            }
 
-        if ((*root).get("with_snapshot", false).asBool()) {
             std::string normalizedTopic;
-            if (!pm::ws::WsHub::instance().resolveTopic(connection, topic, normalizedTopic, error)) {
-                Json::Value payload;
-                payload["message"] = error;
-                sendSystemEvent(connection, "system.error", payload, topic);
+            if (!resolveTopicOrSendError(connection, command.topic, normalizedTopic)) {
+                return;
+            }
+
+            sendSystemEvent(connection, "system.subscribed", subscriptionsPayload(connection), command.topic);
+
+            if (command.since_seq.has_value()) {
+                pm::ws::WsHub::ReplayResult replayResult;
+                if (!pm::ws::WsHub::instance().replaySince(
+                        connection,
+                        normalizedTopic,
+                        *command.since_seq,
+                        command.replay_limit,
+                        replayResult,
+                        error)) {
+                    sendSystemError(connection, {drogon::k400BadRequest, error}, normalizedTopic);
+                    return;
+                }
+
+                sendReplayResult(connection, command.topic, *command.since_seq, replayResult);
+                if (command.with_snapshot && replayResult.gap_detected) {
+                    std::string dbErr;
+                    auto db = getDbOrNull(dbErr);
+                    if (!db) {
+                        sendSystemError(connection, {drogon::k500InternalServerError, dbErr}, normalizedTopic);
+                        return;
+                    }
+                    pm::ws::sendTopicSnapshot(connection, db, normalizedTopic, command.root);
+                }
+                return;
+            }
+
+            if (command.with_snapshot) {
+                std::string dbErr;
+                auto db = getDbOrNull(dbErr);
+                if (!db) {
+                    sendSystemError(connection, {drogon::k500InternalServerError, dbErr}, normalizedTopic);
+                    return;
+                }
+                pm::ws::sendTopicSnapshot(connection, db, normalizedTopic, command.root);
+            }
+            return;
+        }
+
+        case pm::ws::ClientAction::Snapshot: {
+            std::string normalizedTopic;
+            if (!resolveTopicOrSendError(connection, command.topic, normalizedTopic)) {
                 return;
             }
 
             std::string dbErr;
             auto db = getDbOrNull(dbErr);
             if (!db) {
-                Json::Value payload;
-                payload["message"] = dbErr;
-                sendSystemEvent(connection, "system.error", payload, normalizedTopic);
+                sendSystemError(connection, {drogon::k500InternalServerError, dbErr}, normalizedTopic);
                 return;
             }
 
-            pm::ws::sendTopicSnapshot(connection, db, normalizedTopic, *root);
-        }
-        return;
-    }
-
-    if (action == "snapshot") {
-        std::string normalizedTopic;
-        std::string error;
-        if (!pm::ws::WsHub::instance().resolveTopic(connection, topic, normalizedTopic, error)) {
-            Json::Value payload;
-            payload["message"] = error;
-            sendSystemEvent(connection, "system.error", payload, topic);
+            pm::ws::sendTopicSnapshot(connection, db, normalizedTopic, command.root);
             return;
         }
 
-        std::string dbErr;
-        auto db = getDbOrNull(dbErr);
-        if (!db) {
-            Json::Value payload;
-            payload["message"] = dbErr;
-            sendSystemEvent(connection, "system.error", payload, normalizedTopic);
+        case pm::ws::ClientAction::Replay: {
+            std::string normalizedTopic;
+            if (!resolveTopicOrSendError(connection, command.topic, normalizedTopic)) {
+                return;
+            }
+
+            std::string error;
+            pm::ws::WsHub::ReplayResult replayResult;
+            if (!pm::ws::WsHub::instance().replaySince(
+                    connection,
+                    normalizedTopic,
+                    *command.since_seq,
+                    command.replay_limit,
+                    replayResult,
+                    error)) {
+                sendSystemError(connection, {drogon::k400BadRequest, error}, normalizedTopic);
+                return;
+            }
+
+            sendReplayResult(connection, command.topic, *command.since_seq, replayResult);
             return;
         }
 
-        pm::ws::sendTopicSnapshot(connection, db, normalizedTopic, *root);
-        return;
+        case pm::ws::ClientAction::Unsubscribe:
+            pm::ws::WsHub::instance().unsubscribe(connection, command.topic);
+            sendSystemEvent(connection, "system.unsubscribed", subscriptionsPayload(connection), command.topic);
+            return;
     }
-
-    if (action == "unsubscribe") {
-        pm::ws::WsHub::instance().unsubscribe(connection, topic);
-        sendSystemEvent(connection, "system.unsubscribed", subscriptionsPayload(connection), topic);
-        return;
-    }
-
-    Json::Value payload;
-    payload["message"] = "unknown action";
-    payload["action"] = action;
-    sendSystemEvent(connection, "system.error", payload);
 }
 
 void MarketWsController::handleConnectionClosed(const drogon::WebSocketConnectionPtr &connection) {

@@ -6,6 +6,7 @@
 #include "pm/util/AuthGuard.h"
 #include "pm/util/Expected.h"
 #include "pm/util/JsonSerializers.h"
+#include "pm/ws/MarketRealtimePublisher.h"
 
 #include <charconv>
 #include <cctype>
@@ -361,6 +362,8 @@ void MarketController::createMarket(
                 question.value(),
                 outcomeTitles.value(),
                 [cbp](MarketRow created, std::vector<OutcomeRow> outcomes) {
+                    pm::ws::publishMarketLifecycle(created, outcomes, "created");
+
                     auto resp = HttpResponse::newHttpJsonResponse(
                         pm::json::toJsonWithOutcomes(created, outcomes));
                     resp->setStatusCode(drogon::k201Created);
@@ -424,6 +427,8 @@ void MarketController::updateMarket(
                                 return (*cbp)(pm::jsonError(
                                     {drogon::k404NotFound, "market not found"}));
                             }
+
+                            pm::ws::publishMarketLifecycle(*updated, "updated");
 
                             auto resp =
                                 HttpResponse::newHttpJsonResponse(pm::json::toJson(*updated));
@@ -494,6 +499,8 @@ void MarketController::closeMarket(
                                 return (*cbp)(pm::jsonError(
                                     {drogon::k404NotFound, "market not found"}));
                             }
+
+                            pm::ws::publishMarketLifecycle(*updated, "closed");
 
                             auto resp =
                                 HttpResponse::newHttpJsonResponse(pm::json::toJson(*updated));
@@ -616,6 +623,8 @@ void MarketController::resolveMarket(
                         winningOutcomeId,
                         adminUserId,
                         [cbp](MarketRow updated) mutable {
+                            pm::ws::publishMarketLifecycle(updated, "resolved");
+
                             auto resp = drogon::HttpResponse::newHttpJsonResponse(
                                 pm::json::toJson(updated));
                             resp->setStatusCode(drogon::k200OK);
@@ -674,6 +683,8 @@ void MarketController::archiveMarket(
                     svc->archiveMarket(
                         row->id,
                         [cbp](MarketRow updated) mutable {
+                            pm::ws::publishMarketLifecycle(updated, "archived");
+
                             auto resp = HttpResponse::newHttpJsonResponse(pm::json::toJson(updated));
                             resp->setStatusCode(drogon::k200OK);
                             (*cbp)(resp);

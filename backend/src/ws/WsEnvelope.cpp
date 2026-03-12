@@ -37,10 +37,4 @@ namespace pm::ws {
         envelope["meta"] = meta;
         return envelope;
     }
-
-    std::string stringifyJson(const Json::Value &value) {
-        Json::StreamWriterBuilder builder;
-        builder["indentation"] = "";
-        return Json::writeString(builder, value);
-    }
 } // namespace pm::ws
