@@ -1,12 +1,16 @@
-#include "MarketDetailsPage.h"
+#include "../../../include/frontend/ui/pages/MarketDetailsPage.h"
 
 #include <QDateTime>
 #include <QDoubleSpinBox>
+#include <QEvent>
 #include <QFrame>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QLocale>
+#include <QPointer>
 #include <QPushButton>
+#include <QSizePolicy>
+#include <QTimer>
 #include <QVBoxLayout>
 #include <QWidget>
 #include <QtGlobal>
@@ -29,54 +33,149 @@ QString formatMoney(double value) {
     return QLocale().toString(value, 'f', 2);
 }
 
+class HeightSyncFilter : public QObject {
+public:
+    HeightSyncFilter(QWidget *source, QWidget *target, QObject *parent = nullptr)
+        : QObject(parent)
+        , m_source(source)
+        , m_target(target) {}
+
+    void syncSoon() {
+        QTimer::singleShot(0, this, [this]() { syncNow(); });
+    }
+
+protected:
+    bool eventFilter(QObject *watched, QEvent *event) override {
+        if (watched == m_source &&
+            (event->type() == QEvent::Show ||
+             event->type() == QEvent::Resize ||
+             event->type() == QEvent::LayoutRequest ||
+             event->type() == QEvent::PolishRequest)) {
+            syncSoon();
+        }
+
+        return QObject::eventFilter(watched, event);
+    }
+
+private:
+    void syncNow() {
+        if (!m_source || !m_target) {
+            return;
+        }
+
+        int height = m_source->height();
+        if (height <= 0) {
+            height = m_source->sizeHint().height();
+        }
+        if (height <= 0) {
+            height = m_source->minimumSizeHint().height();
+        }
+        if (height <= 0) {
+            return;
+        }
+
+        m_target->setFixedHeight(height);
+    }
+
+    QPointer<QWidget> m_source;
+    QPointer<QWidget> m_target;
+};
+
 } // namespace
 
 MarketDetailsPage::MarketDetailsPage(QWidget *parent)
     : QWidget(parent) {
     auto *root = new QVBoxLayout(this);
-    root->setContentsMargins(24, 24, 24, 24);
+    root->setContentsMargins(20, 20, 20, 20);
     root->setSpacing(18);
 
-    auto *topRow = new QHBoxLayout;
+    auto *headerRow = new QHBoxLayout;
+    headerRow->setContentsMargins(0, 0, 0, 0);
+    headerRow->setSpacing(18);
+
     auto *backButton = new QPushButton(QStringLiteral("Back"), this);
     backButton->setCursor(Qt::PointingHandCursor);
-    backButton->setFixedWidth(120);
-
-    topRow->addWidget(backButton, 0, Qt::AlignLeft);
-    topRow->addStretch(1);
-    root->addLayout(topRow);
+    backButton->setFixedWidth(140);
+    backButton->setStyleSheet(QStringLiteral(
+        "QPushButton { background: #141c26; border: 1px solid #1b2430; color: white; "
+        "padding: 10px 14px; border-radius: 12px; font-size: 16px; }"
+        "QPushButton:hover { background: #182131; }"));
 
     m_questionLabel = new QLabel(this);
     m_questionLabel->setWordWrap(true);
     m_questionLabel->setStyleSheet(QStringLiteral(
         "color: white; font-size: 28px; font-weight: 700;"));
-    root->addWidget(m_questionLabel);
 
-    m_metaLabel = new QLabel(this);
-    m_metaLabel->setWordWrap(true);
-    m_metaLabel->setStyleSheet(QStringLiteral(
-        "color: #9fb2c7; font-size: 14px;"));
-    root->addWidget(m_metaLabel);
+    headerRow->addWidget(backButton, 0, Qt::AlignVCenter);
+    headerRow->addWidget(m_questionLabel, 1, Qt::AlignVCenter);
+
+    root->addLayout(headerRow);
 
     auto *contentRow = new QHBoxLayout;
-    contentRow->setSpacing(18);
-    contentRow->addStretch(1);
+    contentRow->setContentsMargins(0, 0, 0, 0);
+    contentRow->setSpacing(28);
 
-    auto *ticketCard = new QFrame(this);
-    ticketCard->setMinimumWidth(460);
-    ticketCard->setMaximumWidth(520);
+    auto *leftPanel = new QWidget(this);
+    leftPanel->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
+
+    auto *leftLayout = new QVBoxLayout(leftPanel);
+    leftLayout->setContentsMargins(0, 0, 0, 0);
+    leftLayout->setSpacing(0);
+
+    m_photoFrame = new QFrame(leftPanel);
+    m_photoFrame->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+    m_photoFrame->setStyleSheet(QStringLiteral(
+        "QFrame { background: #07111d; border: 1px solid #132238; border-radius: 18px; }"));
+
+    auto *photoLayout = new QVBoxLayout(m_photoFrame);
+    photoLayout->setContentsMargins(28, 28, 28, 28);
+    photoLayout->setSpacing(0);
+
+    m_photoLabel = new QLabel(m_photoFrame);
+    m_photoLabel->setAlignment(Qt::AlignCenter);
+    m_photoLabel->setWordWrap(true);
+    m_photoLabel->setMinimumHeight(120);
+    m_photoLabel->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
+    m_photoLabel->setStyleSheet(QStringLiteral(
+        "color: #a9bbcf; font-size: 24px; font-weight: 700; "
+        "background: transparent; border: none; padding: 18px;"));
+
+    photoLayout->addStretch(1);
+    photoLayout->addWidget(m_photoLabel, 0, Qt::AlignCenter);
+    photoLayout->addStretch(1);
+
+    leftLayout->addWidget(m_photoFrame, 0, Qt::AlignTop);
+
+    auto *rightPanel = new QWidget(this);
+    rightPanel->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Preferred);
+
+    auto *rightLayout = new QVBoxLayout(rightPanel);
+    rightLayout->setContentsMargins(0, 0, 0, 0);
+    rightLayout->setSpacing(0);
+
+    auto *ticketCard = new QFrame(rightPanel);
+    ticketCard->setMinimumWidth(440);
+    ticketCard->setMaximumWidth(500);
+    ticketCard->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Preferred);
     ticketCard->setStyleSheet(QStringLiteral(
         "QFrame { background: #07111d; border: 1px solid #132238; border-radius: 16px; }"));
 
     auto *ticketLayout = new QVBoxLayout(ticketCard);
     ticketLayout->setContentsMargins(20, 20, 20, 20);
-    ticketLayout->setSpacing(16);
+    ticketLayout->setSpacing(14);
 
     auto *ticketTitle = new QLabel(QStringLiteral("Trade"), ticketCard);
     ticketTitle->setAlignment(Qt::AlignCenter);
     ticketTitle->setStyleSheet(QStringLiteral(
         "color: white; font-size: 22px; font-weight: 700;"));
     ticketLayout->addWidget(ticketTitle);
+
+    m_metaLabel = new QLabel(ticketCard);
+    m_metaLabel->setAlignment(Qt::AlignCenter);
+    m_metaLabel->setWordWrap(true);
+    m_metaLabel->setStyleSheet(QStringLiteral(
+        "color: #9fb2c7; font-size: 14px;"));
+    ticketLayout->addWidget(m_metaLabel);
 
     auto *sideRow = new QHBoxLayout;
     sideRow->setSpacing(10);
@@ -184,9 +283,16 @@ MarketDetailsPage::MarketDetailsPage(QWidget *parent)
         "QPushButton:disabled { background: #172331; color: #7c8fa4; border-color: #223349; }"));
     ticketLayout->addWidget(m_submitButton);
 
-    contentRow->addWidget(ticketCard, 0);
-    contentRow->addStretch(1);
-    root->addLayout(contentRow);
+    rightLayout->addWidget(ticketCard, 0, Qt::AlignTop | Qt::AlignHCenter);
+
+    contentRow->addWidget(leftPanel, 3, Qt::AlignTop);
+    contentRow->addWidget(rightPanel, 2, Qt::AlignTop);
+
+    root->addLayout(contentRow, 1);
+
+    auto *heightSync = new HeightSyncFilter(ticketCard, m_photoFrame, this);
+    ticketCard->installEventFilter(heightSync);
+    heightSync->syncSoon();
 
     connect(backButton, &QPushButton::clicked, this, &MarketDetailsPage::backRequested);
 
@@ -215,6 +321,7 @@ MarketDetailsPage::MarketDetailsPage(QWidget *parent)
     connect(m_loginButton, &QPushButton::clicked, this, &MarketDetailsPage::loginRequested);
     connect(m_submitButton, &QPushButton::clicked, this, &MarketDetailsPage::submitOrder);
 
+    updatePhotoPanel();
     updateTicketUi();
 }
 
@@ -302,6 +409,14 @@ const ApiOutcome *MarketDetailsPage::selectedOutcome() const {
     return nullptr;
 }
 
+void MarketDetailsPage::updatePhotoPanel() {
+    if (!m_photoLabel) {
+        return;
+    }
+
+    m_photoLabel->setText(QStringLiteral("Photo is not found\nor not used"));
+}
+
 void MarketDetailsPage::setMarket(const ApiMarket &market, const QString &preferredSelection) {
     m_market = market;
     m_selectedOutcomeId.clear();
@@ -343,6 +458,7 @@ void MarketDetailsPage::setMarket(const ApiMarket &market, const QString &prefer
         }
     }
 
+    updatePhotoPanel();
     clearTransientStatus();
     updateTicketUi();
 }
@@ -351,6 +467,7 @@ void MarketDetailsPage::clearTransientStatus() {
     if (!m_ticketStatusLabel) {
         return;
     }
+
     m_ticketStatusLabel->clear();
     m_ticketStatusLabel->setStyleSheet(QStringLiteral(
         "color: #9fb2c7; font-size: 13px;"));
@@ -500,6 +617,10 @@ void MarketDetailsPage::updateTicketUi() {
         m_ticketStatusLabel->setText(QStringLiteral("Choose Yes or No."));
         m_ticketStatusLabel->setStyleSheet(QStringLiteral(
             "color: #9fb2c7; font-size: 13px;"));
+    }
+
+    if (m_photoFrame) {
+        m_photoFrame->updateGeometry();
     }
 }
 

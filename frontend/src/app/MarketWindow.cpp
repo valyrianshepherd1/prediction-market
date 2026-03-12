@@ -1,15 +1,15 @@
-#include "MarketWindow.h"
+#include "../../include/frontend/app/MarketWindow.h"
 
-#include "../ui/HeaderBar.h"
-#include "../ui/Sidebar.h"
-#include "../ui/dialogs/AuthDialog.h"
-#include "../ui/pages/AuthRequiredPage.h"
-#include "../ui/pages/MarketsPage.h"
-#include "../ui/pages/OrdersPage.h"
-#include "../ui/pages/PortfolioPage.h"
-#include "../ui/pages/ProfilePage.h"
-#include "../ui/pages/TradesPage.h"
-#include "../ui/pages/MarketDetailsPage.h"
+#include "../../include/frontend/ui/HeaderBar.h"
+#include "../../include/frontend/ui/Sidebar.h"
+#include "../../include/frontend/ui/dialogs/AuthDialog.h"
+#include "../../include/frontend/ui/pages/AuthRequiredPage.h"
+#include "../../include/frontend/ui/pages/MarketsPage.h"
+#include "../../include/frontend/ui/pages/OrdersPage.h"
+#include "../../include/frontend/ui/pages/PortfolioPage.h"
+#include "../../include/frontend/ui/pages/ProfilePage.h"
+#include "../../include/frontend/ui/pages/TradesPage.h"
+#include "../../include/frontend/ui/pages/MarketDetailsPage.h"
 
 #include <QApplication>
 #include <QDateTime>

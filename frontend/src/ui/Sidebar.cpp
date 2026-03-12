@@ -1,4 +1,4 @@
-#include "Sidebar.h"
+#include "../../include/frontend/ui/Sidebar.h"
 
 #include <QButtonGroup>
 #include <QLabel>

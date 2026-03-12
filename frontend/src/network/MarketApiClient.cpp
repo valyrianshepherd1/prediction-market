@@ -1,4 +1,4 @@
-#include "MarketApiClient.h"
+#include "../../include/frontend/network/MarketApiClient.h"
 
 #include <QJsonArray>
 #include <QJsonDocument>

@@ -1,7 +1,7 @@
 #include <QApplication>
 #include <QCoreApplication>
 
-#include "app/MarketWindow.h"
+#include "../include/frontend/app/MarketWindow.h"
 
 int main(int argc, char *argv[]) {
     QApplication app(argc, argv);

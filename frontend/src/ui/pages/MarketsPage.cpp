@@ -1,6 +1,6 @@
-#include "MarketsPage.h"
+#include "../../../include/frontend/ui/pages/MarketsPage.h"
 
-#include "../MarketCardWidget.h"
+#include "../../../include/frontend/ui/MarketCardWidget.h"
 
 #include <QFrame>
 #include <QGridLayout>

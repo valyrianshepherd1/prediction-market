@@ -1,4 +1,4 @@
-#include "AuthDialog.h"
+#include "../../../include/frontend/ui/dialogs/AuthDialog.h"
 
 #include <QFormLayout>
 #include <QLabel>

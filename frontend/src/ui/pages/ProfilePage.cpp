@@ -1,4 +1,4 @@
-#include "ProfilePage.h"
+#include "../../../include/frontend/ui/pages/ProfilePage.h"
 
 #include <QHBoxLayout>
 #include <QLabel>
@@ -17,13 +17,6 @@ QString formatUnits(qint64 amount, const QString &unitLabel) {
         .arg(unitLabel);
 }
 
-QWidget *makeSectionTitle(const QString &text, QWidget *parent = nullptr) {
-    auto *label = new QLabel(text, parent);
-    label->setStyleSheet(QStringLiteral(
-        "color: white; font-size: 20px; font-weight: 700;"));
-    return label;
-}
-
 } // namespace
 
 ProfilePage::ProfilePage(QWidget *parent)
@@ -37,8 +30,6 @@ ProfilePage::ProfilePage(QWidget *parent)
 
     auto *leftColumn = new QVBoxLayout;
     leftColumn->setSpacing(14);
-
-    leftColumn->addWidget(makeSectionTitle(QStringLiteral("Profile"), this), 0, Qt::AlignLeft);
 
     auto *profileCard = new QWidget(this);
     profileCard->setObjectName(QStringLiteral("ProfileCard"));

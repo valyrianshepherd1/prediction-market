@@ -1,4 +1,4 @@
-#include "MarketCardWidget.h"
+#include "../../include/frontend/ui/MarketCardWidget.h"
 
 #include <QDateTime>
 #include <QHBoxLayout>
@@ -37,19 +37,37 @@ MarketCardWidget::MarketCardWidget(QWidget *parent)
     m_meta = new QLabel(this);
     m_meta->setObjectName(QStringLiteral("MarketVolume"));
     m_meta->setAlignment(Qt::AlignCenter);
-    m_meta->setStyleSheet(QStringLiteral("color: #9fb0c3; font-size: 12px;"));
-    root->addWidget(m_meta);
     m_meta->setAttribute(Qt::WA_TransparentForMouseEvents);
+    m_meta->setAttribute(Qt::WA_StyledBackground, true);
+    m_meta->setStyleSheet(QStringLiteral(
+        "QLabel {"
+        "  color: #d7e3ef;"
+        "  font-size: 12px;"
+        "  background-color: rgba(0, 0, 0, 40);"
+        "  border: none;"
+        "  border-radius: 10px;"
+        "  padding: 6px 10px;"
+        "}"));
+    root->addWidget(m_meta);
 
     m_question = new QLabel(this);
     m_question->setObjectName(QStringLiteral("MarketQuestion"));
     m_question->setAlignment(Qt::AlignCenter);
     m_question->setWordWrap(true);
-    m_question->setMinimumHeight(72);
-    m_question->setStyleSheet(QStringLiteral(
-        "font-size: 18px; font-weight: 700; color: white;"));
-    root->addWidget(m_question);
+    m_question->setMinimumHeight(84);
     m_question->setAttribute(Qt::WA_TransparentForMouseEvents);
+    m_question->setAttribute(Qt::WA_StyledBackground, true);
+    m_question->setStyleSheet(QStringLiteral(
+        "QLabel {"
+        "  color: white;"
+        "  font-size: 18px;"
+        "  font-weight: 700;"
+        "  background-color: rgba(0, 0, 0, 40);"
+        "  border: none;"
+        "  border-radius: 16px;"
+        "  padding: 16px 18px;"
+        "}"));
+    root->addWidget(m_question);
 
     root->addStretch(1);
 
@@ -66,12 +84,32 @@ MarketCardWidget::MarketCardWidget(QWidget *parent)
     m_noValue->setFlat(true);
 
     m_yesValue->setStyleSheet(QStringLiteral(
-        "color: #7ef0a8; background: #123222; border: 1px solid #1f7a45; "
-        "padding: 12px 16px; border-radius: 12px; font-size: 18px; font-weight: 700;"));
+        "QPushButton {"
+        "  color: #7ef0a8;"
+        "  background: #123222;"
+        "  border: 1px solid #1f7a45;"
+        "  padding: 12px 16px;"
+        "  border-radius: 14px;"
+        "  font-size: 18px;"
+        "  font-weight: 700;"
+        "}"
+        "QPushButton:hover {"
+        "  background: #17452d;"
+        "}"));
 
     m_noValue->setStyleSheet(QStringLiteral(
-        "color: #ff8f9b; background: #34181c; border: 1px solid #8b2f39; "
-        "padding: 12px 16px; border-radius: 12px; font-size: 18px; font-weight: 700;"));
+        "QPushButton {"
+        "  color: #ff8f9b;"
+        "  background: #34181c;"
+        "  border: 1px solid #8b2f39;"
+        "  padding: 12px 16px;"
+        "  border-radius: 14px;"
+        "  font-size: 18px;"
+        "  font-weight: 700;"
+        "}"
+        "QPushButton:hover {"
+        "  background: #472126;"
+        "}"));
 
     percentRow->addWidget(m_yesValue);
     percentRow->addWidget(m_noValue);

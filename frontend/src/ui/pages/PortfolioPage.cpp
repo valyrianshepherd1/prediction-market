@@ -1,4 +1,4 @@
-#include "PortfolioPage.h"
+#include "../../../include/frontend/ui/pages/PortfolioPage.h"
 
 #include <QAbstractItemView>
 #include <QHash>

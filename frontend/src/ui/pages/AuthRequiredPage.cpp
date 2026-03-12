@@ -1,4 +1,4 @@
-#include "AuthRequiredPage.h"
+#include "../../../include/frontend/ui/pages/AuthRequiredPage.h"
 
 #include <QHBoxLayout>
 #include <QLabel>

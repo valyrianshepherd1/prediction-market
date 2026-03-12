@@ -9,41 +9,41 @@ find_package(Qt6 REQUIRED COMPONENTS Widgets Network)
 add_executable(frontend_app
         src/main.cpp
 
-        src/app/MarketWindow.h
+        include/frontend/app/MarketWindow.h
         src/app/MarketWindow.cpp
 
-        src/network/MarketApiClient.h
+        include/frontend/network/MarketApiClient.h
         src/network/MarketApiClient.cpp
 
-        src/ui/HeaderBar.h
+        include/frontend/ui/HeaderBar.h
         src/ui/HeaderBar.cpp
-        src/ui/Sidebar.h
+        include/frontend/ui/Sidebar.h
         src/ui/Sidebar.cpp
-        src/ui/MarketCardWidget.h
+        include/frontend/ui/MarketCardWidget.h
         src/ui/MarketCardWidget.cpp
 
-        src/ui/pages/HomePage.h
+        include/frontend/ui/pages/HomePage.h
         src/ui/pages/HomePage.cpp
-        src/ui/pages/MarketsPage.h
+        include/frontend/ui/pages/MarketsPage.h
         src/ui/pages/MarketsPage.cpp
-        src/ui/pages/ProfilePage.h
+        include/frontend/ui/pages/ProfilePage.h
         src/ui/pages/ProfilePage.cpp
-        src/ui/pages/TradesPage.h
+        include/frontend/ui/pages/TradesPage.h
         src/ui/pages/TradesPage.cpp
-        src/ui/pages/PortfolioPage.h
+        include/frontend/ui/pages/PortfolioPage.h
         src/ui/pages/PortfolioPage.cpp
-        src/ui/pages/OrdersPage.h
+        include/frontend/ui/pages/OrdersPage.h
         src/ui/pages/OrdersPage.cpp
-        src/ui/pages/AuthRequiredPage.h
+        include/frontend/ui/pages/AuthRequiredPage.h
         src/ui/pages/AuthRequiredPage.cpp
-        src/ui/pages/MarketDetailsPage.h
+        include/frontend/ui/pages/MarketDetailsPage.h
         src/ui/pages/MarketDetailsPage.cpp
 
-        src/ui/dialogs/AuthDialog.h
+        include/frontend/ui/dialogs/AuthDialog.h
         src/ui/dialogs/AuthDialog.cpp
-        src/ui/pages/OrdersPage.h
+        include/frontend/ui/pages/OrdersPage.h
         src/ui/pages/OrdersPage.cpp
-        src/ui/pages/PortfolioPage.h
+        include/frontend/ui/pages/PortfolioPage.h
         src/ui/pages/PortfolioPage.cpp
 )
 

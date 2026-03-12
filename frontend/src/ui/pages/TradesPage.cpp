@@ -1,4 +1,4 @@
-#include "TradesPage.h"
+#include "../../../include/frontend/ui/pages/TradesPage.h"
 
 #include <QAbstractItemView>
 #include <QDateTime>

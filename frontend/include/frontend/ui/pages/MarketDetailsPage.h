@@ -8,6 +8,7 @@
 class QDoubleSpinBox;
 class QLabel;
 class QPushButton;
+class QFrame;
 
 class MarketDetailsPage : public QWidget {
     Q_OBJECT
@@ -30,6 +31,7 @@ private:
     void updateOutcomeButtons();
     void updateSideButtons();
     void updateTicketUi();
+    void updatePhotoPanel();
     void submitOrder();
     void clearTransientStatus();
     void applyFilledOrderToKnownPositions(const ApiOrder &order);
@@ -47,6 +49,10 @@ private:
     QHash<QString, qint64> m_knownOwnedMicrosByOutcome;
 
     QLabel *m_questionLabel = nullptr;
+
+    QFrame *m_photoFrame = nullptr;
+    QLabel *m_photoLabel = nullptr;
+
     QLabel *m_metaLabel = nullptr;
     QLabel *m_ownedPointsLabel = nullptr;
     QLabel *m_tradePreviewLabel = nullptr;
