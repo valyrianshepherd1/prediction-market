@@ -1,20 +1,28 @@
 #pragma once
 
-#include "../network/MarketApiClient.h"
+#include "frontend/network/ApiTypes.h"
 
 #include <QMainWindow>
 
 class AuthRequiredPage;
 class HeaderBar;
+class MarketApiClient;
+class MarketDetailsPage;
+class MarketWsClient;
 class MarketsPage;
-class PortfolioPage;
-class ProfilePage;
+class MarketsRepository;
+class MarketDetailsRepository;
 class OrdersPage;
+class OrdersRepository;
+class PortfolioPage;
+class PortfolioRepository;
+class ProfilePage;
+class QStackedWidget;
+class SessionStore;
 class Sidebar;
 class TradesPage;
-class QStackedWidget;
+class TradesRepository;
 class QWidget;
-class MarketDetailsPage;
 
 class MarketWindow : public QMainWindow {
     Q_OBJECT
@@ -36,6 +44,7 @@ private slots:
 private:
     void openAuthDialog(bool startOnSignUp);
     void setProtectedPagesAuthenticated(bool authenticated);
+    void scheduleUserRealtimeRefresh();
 
     HeaderBar *m_header = nullptr;
     Sidebar *m_sidebar = nullptr;
@@ -59,7 +68,15 @@ private:
     QStackedWidget *m_profileStack = nullptr;
 
     QStackedWidget *m_stack = nullptr;
-    MarketApiClient *m_api = nullptr;
+    MarketApiClient *m_transport = nullptr;
+    MarketWsClient *m_realtimeClient = nullptr;
+    SessionStore *m_sessionStore = nullptr;
+    MarketsRepository *m_marketsRepository = nullptr;
+    MarketDetailsRepository *m_marketDetailsRepository = nullptr;
+    PortfolioRepository *m_portfolioRepository = nullptr;
+    OrdersRepository *m_ordersRepository = nullptr;
+    TradesRepository *m_tradesRepository = nullptr;
 
+    bool m_userRealtimeRefreshQueued = false;
     QString m_profileName = QStringLiteral("Guest");
 };

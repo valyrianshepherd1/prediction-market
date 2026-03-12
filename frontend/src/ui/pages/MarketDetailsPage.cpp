@@ -1,119 +1,98 @@
-#include "../../../include/frontend/ui/pages/MarketDetailsPage.h"
+#include "frontend/ui/pages/MarketDetailsPage.h"
 
+#include "frontend/repositories/MarketDetailsRepository.h"
+#include "frontend/repositories/OrdersRepository.h"
+#include "frontend/state/SessionStore.h"
+
+#include <QAbstractSpinBox>
 #include <QDateTime>
 #include <QDoubleSpinBox>
-#include <QEvent>
 #include <QFrame>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QLocale>
-#include <QPointer>
+#include <QMap>
+#include <QStringList>
 #include <QPushButton>
 #include <QSizePolicy>
 #include <QTimer>
 #include <QVBoxLayout>
-#include <QWidget>
-#include <QtGlobal>
+#include <QtMath>
 
 namespace {
 
-QString formatCreatedAt(const QString &createdAt) {
-    const QDateTime dt = QDateTime::fromString(createdAt, Qt::ISODate);
+QString formatCreatedAt(const QString &value) {
+    const QDateTime dt = QDateTime::fromString(value, Qt::ISODate);
     if (!dt.isValid()) {
-        return QString();
+        return value.trimmed();
     }
-    return dt.date().toString(QStringLiteral("dd MMM yyyy"));
+    return dt.toLocalTime().toString(QStringLiteral("dd MMM yyyy, HH:mm"));
 }
 
-QString formatPoints(qint64 micros, int decimals = 4) {
-    return QLocale().toString(static_cast<double>(micros) / 1000000.0, 'f', decimals);
+QString formatMoney(double amount) {
+    return QStringLiteral("%1").arg(QLocale().toString(amount, 'f', amount >= 100.0 ? 2 : 4));
 }
 
-QString formatMoney(double value) {
-    return QLocale().toString(value, 'f', 2);
+QString formatPoints(qint64 micros) {
+    return QLocale().toString(static_cast<double>(micros) / 1000000.0, 'f', 4);
 }
 
-class HeightSyncFilter : public QObject {
-public:
-    HeightSyncFilter(QWidget *source, QWidget *target, QObject *parent = nullptr)
-        : QObject(parent)
-        , m_source(source)
-        , m_target(target) {}
 
-    void syncSoon() {
-        QTimer::singleShot(0, this, [this]() { syncNow(); });
+int bestBidPercent(const ApiOrderBook &orderBook) {
+    if (orderBook.buy.isEmpty()) {
+        return -1;
+    }
+    return qBound(0, orderBook.buy.first().priceBasisPoints / 100, 100);
+}
+
+int bestAskPercent(const ApiOrderBook &orderBook) {
+    if (orderBook.sell.isEmpty()) {
+        return -1;
+    }
+    return qBound(0, orderBook.sell.first().priceBasisPoints / 100, 100);
+}
+
+QString lastTradeSummary(const QVector<ApiTrade> &trades) {
+    if (trades.isEmpty()) {
+        return {};
     }
 
-protected:
-    bool eventFilter(QObject *watched, QEvent *event) override {
-        if (watched == m_source &&
-            (event->type() == QEvent::Show ||
-             event->type() == QEvent::Resize ||
-             event->type() == QEvent::LayoutRequest ||
-             event->type() == QEvent::PolishRequest)) {
-            syncSoon();
-        }
-
-        return QObject::eventFilter(watched, event);
-    }
-
-private:
-    void syncNow() {
-        if (!m_source || !m_target) {
-            return;
-        }
-
-        int height = m_source->height();
-        if (height <= 0) {
-            height = m_source->sizeHint().height();
-        }
-        if (height <= 0) {
-            height = m_source->minimumSizeHint().height();
-        }
-        if (height <= 0) {
-            return;
-        }
-
-        m_target->setFixedHeight(height);
-    }
-
-    QPointer<QWidget> m_source;
-    QPointer<QWidget> m_target;
-};
+    const ApiTrade &trade = trades.first();
+    return QStringLiteral("last %1¢").arg(qBound(0, trade.priceBasisPoints / 100, 100));
+}
 
 } // namespace
 
 MarketDetailsPage::MarketDetailsPage(QWidget *parent)
     : QWidget(parent) {
     auto *root = new QVBoxLayout(this);
-    root->setContentsMargins(20, 20, 20, 20);
+    root->setContentsMargins(24, 24, 24, 24);
     root->setSpacing(18);
 
-    auto *headerRow = new QHBoxLayout;
-    headerRow->setContentsMargins(0, 0, 0, 0);
-    headerRow->setSpacing(18);
+    auto *topRow = new QHBoxLayout;
+    topRow->setSpacing(12);
 
-    auto *backButton = new QPushButton(QStringLiteral("Back"), this);
+    auto *backButton = new QPushButton(QStringLiteral("← Back"), this);
     backButton->setCursor(Qt::PointingHandCursor);
-    backButton->setFixedWidth(140);
+    backButton->setFixedWidth(120);
     backButton->setStyleSheet(QStringLiteral(
         "QPushButton { background: #141c26; border: 1px solid #1b2430; color: white; "
-        "padding: 10px 14px; border-radius: 12px; font-size: 16px; }"
+        "padding: 10px 14px; border-radius: 12px; font-weight: 600; }"
         "QPushButton:hover { background: #182131; }"));
 
     m_questionLabel = new QLabel(this);
     m_questionLabel->setWordWrap(true);
     m_questionLabel->setStyleSheet(QStringLiteral(
-        "color: white; font-size: 28px; font-weight: 700;"));
+        "color: white; font-size: 30px; font-weight: 700;"));
 
-    headerRow->addWidget(backButton, 0, Qt::AlignVCenter);
-    headerRow->addWidget(m_questionLabel, 1, Qt::AlignVCenter);
+    topRow->addWidget(backButton, 0, Qt::AlignLeft | Qt::AlignTop);
+    topRow->addWidget(m_questionLabel, 1, Qt::AlignVCenter);
 
-    root->addLayout(headerRow);
+    root->addLayout(topRow);
 
     auto *contentRow = new QHBoxLayout;
-    contentRow->setContentsMargins(0, 0, 0, 0);
-    contentRow->setSpacing(28);
+    contentRow->setSpacing(18);
+    contentRow->setAlignment(Qt::AlignTop);
 
     auto *leftPanel = new QWidget(this);
     leftPanel->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
@@ -175,6 +154,7 @@ MarketDetailsPage::MarketDetailsPage(QWidget *parent)
     m_metaLabel->setWordWrap(true);
     m_metaLabel->setStyleSheet(QStringLiteral(
         "color: #9fb2c7; font-size: 14px;"));
+    m_metaLabel->setFixedHeight(44);
     ticketLayout->addWidget(m_metaLabel);
 
     auto *sideRow = new QHBoxLayout;
@@ -252,18 +232,21 @@ MarketDetailsPage::MarketDetailsPage(QWidget *parent)
     m_tradePreviewLabel->setWordWrap(true);
     m_tradePreviewLabel->setStyleSheet(QStringLiteral(
         "color: #dbe7f3; font-size: 14px; font-weight: 600;"));
+    m_tradePreviewLabel->setFixedHeight(42);
     ticketLayout->addWidget(m_tradePreviewLabel);
 
     m_payoutPreviewLabel = new QLabel(ticketCard);
     m_payoutPreviewLabel->setWordWrap(true);
     m_payoutPreviewLabel->setStyleSheet(QStringLiteral(
         "color: #9fb2c7; font-size: 13px;"));
+    m_payoutPreviewLabel->setFixedHeight(42);
     ticketLayout->addWidget(m_payoutPreviewLabel);
 
     m_ticketStatusLabel = new QLabel(ticketCard);
     m_ticketStatusLabel->setWordWrap(true);
     m_ticketStatusLabel->setStyleSheet(QStringLiteral(
         "color: #9fb2c7; font-size: 13px;"));
+    m_ticketStatusLabel->setFixedHeight(38);
     ticketLayout->addWidget(m_ticketStatusLabel);
 
     m_loginButton = new QPushButton(QStringLiteral("Log in to trade"), ticketCard);
@@ -290,9 +273,21 @@ MarketDetailsPage::MarketDetailsPage(QWidget *parent)
 
     root->addLayout(contentRow, 1);
 
-    auto *heightSync = new HeightSyncFilter(ticketCard, m_photoFrame, this);
-    ticketCard->installEventFilter(heightSync);
-    heightSync->syncSoon();
+    QTimer::singleShot(0, this, [ticketCard, photoFrame = m_photoFrame]() {
+        if (!ticketCard || !photoFrame) {
+            return;
+        }
+
+        const int stableHeight = qMax(ticketCard->sizeHint().height(), ticketCard->minimumSizeHint().height());
+        if (stableHeight <= 0) {
+            return;
+        }
+
+        ticketCard->setMinimumHeight(stableHeight);
+        ticketCard->setMaximumHeight(stableHeight);
+        photoFrame->setMinimumHeight(stableHeight);
+        photoFrame->setMaximumHeight(stableHeight);
+    });
 
     connect(backButton, &QPushButton::clicked, this, &MarketDetailsPage::backRequested);
 
@@ -325,19 +320,46 @@ MarketDetailsPage::MarketDetailsPage(QWidget *parent)
     updateTicketUi();
 }
 
-void MarketDetailsPage::setApiClient(MarketApiClient *api) {
-    if (m_api == api) {
+void MarketDetailsPage::setSessionStore(SessionStore *sessionStore) {
+    if (m_sessionStore == sessionStore) {
         return;
     }
 
-    m_api = api;
+    m_sessionStore = sessionStore;
 
-    if (!m_api) {
+    if (!m_sessionStore) {
         updateTicketUi();
         return;
     }
 
-    connect(m_api, &MarketApiClient::orderBusyChanged, this, [this](bool busy) {
+    connect(m_sessionStore, &SessionStore::sessionReady, this, [this](const ApiSession &) {
+        m_knownOwnedMicrosByOutcome.clear();
+        clearTransientStatus();
+        updateTicketUi();
+    });
+
+    connect(m_sessionStore, &SessionStore::sessionCleared, this, [this]() {
+        m_knownOwnedMicrosByOutcome.clear();
+        clearTransientStatus();
+        updateTicketUi();
+    });
+
+    updateTicketUi();
+}
+
+void MarketDetailsPage::setOrdersRepository(OrdersRepository *ordersRepository) {
+    if (m_ordersRepository == ordersRepository) {
+        return;
+    }
+
+    m_ordersRepository = ordersRepository;
+
+    if (!m_ordersRepository) {
+        updateTicketUi();
+        return;
+    }
+
+    connect(m_ordersRepository, &OrdersRepository::orderBusyChanged, this, [this](bool busy) {
         m_orderBusy = busy;
 
         if (busy) {
@@ -349,16 +371,19 @@ void MarketDetailsPage::setApiClient(MarketApiClient *api) {
         updateTicketUi();
     });
 
-    connect(m_api, &MarketApiClient::orderCreated, this, [this](const ApiOrder &order) {
+    connect(m_ordersRepository, &OrdersRepository::orderCreated, this, [this](const ApiOrder &order) {
         m_orderBusy = false;
         applyFilledOrderToKnownPositions(order);
         m_ticketStatusLabel->setText(QStringLiteral("Order placed: %1").arg(order.id));
         m_ticketStatusLabel->setStyleSheet(QStringLiteral(
             "color: #7ef0a8; font-size: 13px;"));
+        if (m_marketDetailsRepository) {
+            m_marketDetailsRepository->refreshSelectedOutcomeData();
+        }
         updateTicketUi();
     });
 
-    connect(m_api, &MarketApiClient::orderError, this, [this](const QString &message) {
+    connect(m_ordersRepository, &OrdersRepository::orderError, this, [this](const QString &message) {
         m_orderBusy = false;
         m_ticketStatusLabel->setText(message);
         m_ticketStatusLabel->setStyleSheet(QStringLiteral(
@@ -366,20 +391,57 @@ void MarketDetailsPage::setApiClient(MarketApiClient *api) {
         updateTicketUi();
     });
 
-    connect(m_api, &MarketApiClient::sessionReady, this, [this](const ApiSession &) {
-        m_knownOwnedMicrosByOutcome.clear();
-        clearTransientStatus();
-        updateTicketUi();
-    });
-
-    connect(m_api, &MarketApiClient::sessionCleared, this, [this]() {
-        m_knownOwnedMicrosByOutcome.clear();
-        clearTransientStatus();
-        updateTicketUi();
-    });
-
     updateTicketUi();
 }
+
+void MarketDetailsPage::setMarketDetailsRepository(MarketDetailsRepository *marketDetailsRepository) {
+    if (m_marketDetailsRepository == marketDetailsRepository) {
+        return;
+    }
+
+    m_marketDetailsRepository = marketDetailsRepository;
+
+    if (!m_marketDetailsRepository) {
+        return;
+    }
+
+    connect(m_marketDetailsRepository, &MarketDetailsRepository::snapshotReady, this,
+            [this](const ApiMarketDetailsSnapshot &snapshot) {
+                applyMarketDetailsSnapshot(snapshot);
+            });
+
+    connect(m_marketDetailsRepository, &MarketDetailsRepository::loadingChanged, this,
+            [this](bool loading) {
+                if (loading) {
+                    if (m_ticketStatusLabel && m_ticketStatusLabel->text().trimmed().isEmpty()) {
+                        m_ticketStatusLabel->setText(QStringLiteral("Refreshing market snapshot..."));
+                        m_ticketStatusLabel->setStyleSheet(QStringLiteral(
+                            "color: #9fb2c7; font-size: 13px;"));
+                    }
+                    return;
+                }
+
+                if (m_ticketStatusLabel) {
+                    const QString current = m_ticketStatusLabel->text();
+                    if (current == QStringLiteral("Refreshing market snapshot...") ||
+                        current == QStringLiteral("Refreshing selected outcome...")) {
+                        clearTransientStatus();
+                    }
+                }
+            });
+
+    connect(m_marketDetailsRepository, &MarketDetailsRepository::errorOccurred, this,
+            [this](const QString &message) {
+                if (m_orderBusy) {
+                    return;
+                }
+
+                m_ticketStatusLabel->setText(message);
+                m_ticketStatusLabel->setStyleSheet(QStringLiteral(
+                    "color: #ffb86b; font-size: 13px;"));
+            });
+}
+
 
 QString MarketDetailsPage::normalizedSide(const QString &side) const {
     return side.trimmed().toUpper() == QStringLiteral("SELL")
@@ -417,25 +479,77 @@ void MarketDetailsPage::updatePhotoPanel() {
     m_photoLabel->setText(QStringLiteral("Photo is not found\nor not used"));
 }
 
-void MarketDetailsPage::setMarket(const ApiMarket &market, const QString &preferredSelection) {
-    m_market = market;
-    m_selectedOutcomeId.clear();
-    m_orderSide = QStringLiteral("BUY");
 
+void MarketDetailsPage::updateMetaLabel() {
     const QString status = m_market.status.isEmpty()
                                ? QStringLiteral("OPEN")
                                : m_market.status;
 
     const QString createdAt = formatCreatedAt(m_market.createdAt);
 
-    QString meta = status;
+    QStringList parts;
+    parts << status;
     if (!createdAt.isEmpty()) {
-        meta += QStringLiteral(" • %1").arg(createdAt);
+        parts << createdAt;
     }
-    meta += QStringLiteral(" • %1 variants").arg(m_market.outcomes.size());
+    parts << QStringLiteral("%1 variants").arg(m_market.outcomes.size());
+
+    const int bid = bestBidPercent(m_selectedOrderBook);
+    const int ask = bestAskPercent(m_selectedOrderBook);
+    if (bid >= 0) {
+        parts << QStringLiteral("bid %1¢").arg(bid);
+    }
+    if (ask >= 0) {
+        parts << QStringLiteral("ask %1¢").arg(ask);
+    }
+
+    const QString tradeSummary = lastTradeSummary(m_recentTrades);
+    if (!tradeSummary.isEmpty()) {
+        parts << tradeSummary;
+    }
+
+    m_metaLabel->setText(parts.join(QStringLiteral(" • ")));
+}
+
+void MarketDetailsPage::applyMarketDetailsSnapshot(const ApiMarketDetailsSnapshot &snapshot) {
+    if (m_market.id.trimmed().isEmpty() || snapshot.market.id != m_market.id) {
+        return;
+    }
+
+    ApiMarket mergedMarket = m_market;
+    mergedMarket.id = snapshot.market.id;
+    if (!snapshot.market.question.trimmed().isEmpty()) {
+        mergedMarket.question = snapshot.market.question;
+    }
+    if (!snapshot.market.status.trimmed().isEmpty()) {
+        mergedMarket.status = snapshot.market.status;
+    }
+    if (!snapshot.market.createdAt.trimmed().isEmpty()) {
+        mergedMarket.createdAt = snapshot.market.createdAt;
+    }
+    if (!snapshot.market.outcomes.isEmpty()) {
+        mergedMarket.outcomes = snapshot.market.outcomes;
+    }
+
+    m_market = mergedMarket;
+    m_selectedOrderBook = snapshot.orderBook;
+    m_recentTrades = snapshot.recentTrades;
+
+    if (!snapshot.selectedOutcomeId.trimmed().isEmpty()) {
+        m_selectedOutcomeId = snapshot.selectedOutcomeId;
+    }
 
     m_questionLabel->setText(m_market.question);
-    m_metaLabel->setText(meta);
+    updateMetaLabel();
+    updateTicketUi();
+}
+
+void MarketDetailsPage::setMarket(const ApiMarket &market, const QString &preferredSelection) {
+    m_market = market;
+    m_selectedOrderBook = ApiOrderBook{};
+    m_recentTrades.clear();
+    m_selectedOutcomeId.clear();
+    m_orderSide = QStringLiteral("BUY");
 
     const QString preferred = preferredSelection.trimmed().toUpper();
     if (preferred == QStringLiteral("SELL")) {
@@ -458,9 +572,20 @@ void MarketDetailsPage::setMarket(const ApiMarket &market, const QString &prefer
         }
     }
 
+    m_questionLabel->setText(m_market.question);
+    updateMetaLabel();
     updatePhotoPanel();
     clearTransientStatus();
     updateTicketUi();
+
+    if (m_marketDetailsRepository && !m_market.id.trimmed().isEmpty()) {
+        if (m_ticketStatusLabel) {
+            m_ticketStatusLabel->setText(QStringLiteral("Refreshing market snapshot..."));
+            m_ticketStatusLabel->setStyleSheet(QStringLiteral(
+                "color: #9fb2c7; font-size: 13px;"));
+        }
+        m_marketDetailsRepository->openMarket(m_market.id, preferredSelection);
+    }
 }
 
 void MarketDetailsPage::clearTransientStatus() {
@@ -487,7 +612,17 @@ void MarketDetailsPage::selectBinaryOutcome(const QString &titleUpper) {
 
     m_selectedOutcomeId = outcome->id;
     clearTransientStatus();
+    if (m_ticketStatusLabel && m_marketDetailsRepository) {
+        m_ticketStatusLabel->setText(QStringLiteral("Refreshing selected outcome..."));
+        m_ticketStatusLabel->setStyleSheet(QStringLiteral(
+            "color: #9fb2c7; font-size: 13px;"));
+    }
+    updateMetaLabel();
     updateTicketUi();
+
+    if (m_marketDetailsRepository) {
+        m_marketDetailsRepository->selectOutcomeById(outcome->id);
+    }
 }
 
 void MarketDetailsPage::updateSideButtons() {
@@ -555,18 +690,21 @@ void MarketDetailsPage::applyFilledOrderToKnownPositions(const ApiOrder &order) 
 void MarketDetailsPage::updateTicketUi() {
     const ApiOutcome *outcome = selectedOutcome();
 
-    const bool loggedIn =
-        m_api && (m_api->isAuthenticated() || !m_api->currentSession().userId.trimmed().isEmpty());
+    const bool loggedIn = m_sessionStore && m_sessionStore->isAuthenticated();
 
     updateSideButtons();
     updateOutcomeButtons();
 
     const bool hasOutcome = (outcome != nullptr);
+    const QString normalizedMarketStatus = m_market.status.trimmed().isEmpty()
+                                               ? QStringLiteral("OPEN")
+                                               : m_market.status.trimmed().toUpper();
+    const bool marketOpen = (normalizedMarketStatus == QStringLiteral("OPEN"));
 
-    m_amountSpin->setEnabled(hasOutcome && !m_orderBusy);
-    m_loginButton->setVisible(!loggedIn);
+    m_amountSpin->setEnabled(hasOutcome && !m_orderBusy && marketOpen);
+    m_loginButton->setVisible(!loggedIn && marketOpen);
     m_submitButton->setVisible(loggedIn);
-    m_submitButton->setEnabled(loggedIn && hasOutcome && !m_orderBusy);
+    m_submitButton->setEnabled(loggedIn && hasOutcome && !m_orderBusy && marketOpen);
     m_submitButton->setText(m_orderBusy ? QStringLiteral("Submitting...") : QStringLiteral("Trade"));
 
     if (!hasOutcome) {
@@ -609,7 +747,12 @@ void MarketDetailsPage::updateTicketUi() {
         }
     }
 
-    if (!loggedIn) {
+    if (!marketOpen) {
+        m_ticketStatusLabel->setText(QStringLiteral("Trading is unavailable: market status is %1.")
+                                         .arg(normalizedMarketStatus));
+        m_ticketStatusLabel->setStyleSheet(QStringLiteral(
+            "color: #ffb86b; font-size: 13px;"));
+    } else if (!loggedIn) {
         m_ticketStatusLabel->setText(QStringLiteral("Log in or Sign up to place an order."));
         m_ticketStatusLabel->setStyleSheet(QStringLiteral(
             "color: #9fb2c7; font-size: 13px;"));
@@ -619,14 +762,21 @@ void MarketDetailsPage::updateTicketUi() {
             "color: #9fb2c7; font-size: 13px;"));
     }
 
-    if (m_photoFrame) {
+    if (m_photoFrame && m_photoFrame->minimumHeight() <= 0) {
         m_photoFrame->updateGeometry();
     }
 }
 
 void MarketDetailsPage::submitOrder() {
-    if (!m_api || m_api->currentSession().userId.trimmed().isEmpty()) {
+    if (!m_sessionStore || !m_sessionStore->isAuthenticated()) {
         emit loginRequested();
+        return;
+    }
+
+    if (!m_ordersRepository) {
+        m_ticketStatusLabel->setText(QStringLiteral("Trading backend is not connected."));
+        m_ticketStatusLabel->setStyleSheet(QStringLiteral(
+            "color: #ff7b72; font-size: 13px;"));
         return;
     }
 
@@ -647,5 +797,5 @@ void MarketDetailsPage::submitOrder() {
     }
 
     const int priceBasisPoints = outcome->pricePercent * 100;
-    m_api->createOrder(outcome->id, m_orderSide, priceBasisPoints, quantityMicros);
+    m_ordersRepository->createOrder(outcome->id, m_orderSide, priceBasisPoints, quantityMicros);
 }

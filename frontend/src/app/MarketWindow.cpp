@@ -1,15 +1,23 @@
-#include "../../include/frontend/app/MarketWindow.h"
+#include "frontend/app/MarketWindow.h"
 
-#include "../../include/frontend/ui/HeaderBar.h"
-#include "../../include/frontend/ui/Sidebar.h"
-#include "../../include/frontend/ui/dialogs/AuthDialog.h"
-#include "../../include/frontend/ui/pages/AuthRequiredPage.h"
-#include "../../include/frontend/ui/pages/MarketsPage.h"
-#include "../../include/frontend/ui/pages/OrdersPage.h"
-#include "../../include/frontend/ui/pages/PortfolioPage.h"
-#include "../../include/frontend/ui/pages/ProfilePage.h"
-#include "../../include/frontend/ui/pages/TradesPage.h"
-#include "../../include/frontend/ui/pages/MarketDetailsPage.h"
+#include "frontend/network/MarketApiClient.h"
+#include "frontend/network/MarketWsClient.h"
+#include "frontend/repositories/MarketDetailsRepository.h"
+#include "frontend/repositories/MarketsRepository.h"
+#include "frontend/repositories/OrdersRepository.h"
+#include "frontend/repositories/PortfolioRepository.h"
+#include "frontend/repositories/TradesRepository.h"
+#include "frontend/state/SessionStore.h"
+#include "frontend/ui/HeaderBar.h"
+#include "frontend/ui/Sidebar.h"
+#include "frontend/ui/dialogs/AuthDialog.h"
+#include "frontend/ui/pages/AuthRequiredPage.h"
+#include "frontend/ui/pages/MarketDetailsPage.h"
+#include "frontend/ui/pages/MarketsPage.h"
+#include "frontend/ui/pages/OrdersPage.h"
+#include "frontend/ui/pages/PortfolioPage.h"
+#include "frontend/ui/pages/ProfilePage.h"
+#include "frontend/ui/pages/TradesPage.h"
 
 #include <QApplication>
 #include <QDateTime>
@@ -17,6 +25,7 @@
 #include <QLabel>
 #include <QLocale>
 #include <QStackedWidget>
+#include <QTimer>
 #include <QVBoxLayout>
 #include <QWidget>
 
@@ -119,7 +128,17 @@ MarketWindow::MarketWindow(QWidget *parent)
     m_sidebar = new Sidebar(this);
     m_sidebar->setFixedWidth(220);
 
-    m_api = new MarketApiClient(this);
+    m_transport = new MarketApiClient(this);
+    m_realtimeClient = new MarketWsClient(m_transport, this);
+    m_sessionStore = new SessionStore(m_transport, this);
+    m_marketsRepository = new MarketsRepository(m_transport, this);
+    m_marketDetailsRepository = new MarketDetailsRepository(m_transport, this);
+    m_portfolioRepository = new PortfolioRepository(m_transport, this);
+    m_ordersRepository = new OrdersRepository(m_transport, this);
+    m_tradesRepository = new TradesRepository(m_transport, this);
+
+    m_marketsRepository->setRealtimeClient(m_realtimeClient);
+    m_marketDetailsRepository->setRealtimeClient(m_realtimeClient);
 
     m_header = new HeaderBar(this);
     m_markets = new MarketsPage(this);
@@ -129,11 +148,10 @@ MarketWindow::MarketWindow(QWidget *parent)
     m_ordersPage = new OrdersPage(this);
 
     m_marketDetailsPage = new MarketDetailsPage(this);
-    m_marketDetailsPage->setApiClient(m_api);
+    m_marketDetailsPage->setSessionStore(m_sessionStore);
+    m_marketDetailsPage->setOrdersRepository(m_ordersRepository);
+    m_marketDetailsPage->setMarketDetailsRepository(m_marketDetailsRepository);
     m_marketDetailsPage->setObjectName(QStringLiteral("CenterPage"));
-
-    m_portfolioPage->setApiClient(m_api);
-    m_ordersPage->setApiClient(m_api);
 
     m_portfolioGate = new AuthRequiredPage(
         QStringLiteral("View your portfolio"),
@@ -192,7 +210,7 @@ MarketWindow::MarketWindow(QWidget *parent)
     connect(m_profile, &ProfilePage::backRequested, this, [this]() {
         showSection(QStringLiteral("markets"));
     });
-    connect(m_profile, &ProfilePage::logoutRequested, m_api, &MarketApiClient::logout);
+    connect(m_profile, &ProfilePage::logoutRequested, m_sessionStore, &SessionStore::logout);
 
     connect(m_markets, &MarketsPage::marketRequested, this,
         [this](const ApiMarket &market, const QString &preferredSide) {
@@ -219,29 +237,95 @@ MarketWindow::MarketWindow(QWidget *parent)
     connect(m_profileGate, &AuthRequiredPage::loginRequested, this, &MarketWindow::openLoginDialog);
     connect(m_profileGate, &AuthRequiredPage::signUpRequested, this, &MarketWindow::openSignUpDialog);
 
-    connect(m_api, &MarketApiClient::marketsReady, this, [this](const QVector<ApiMarket> &markets) {
+    connect(m_marketsRepository, &MarketsRepository::marketsReady, this, [this](const QVector<ApiMarket> &markets) {
         m_markets->setMarkets(markets);
         m_portfolioPage->setMarkets(markets);
         m_ordersPage->setMarkets(markets);
     });
-    connect(m_api, &MarketApiClient::marketsError, m_markets, &MarketsPage::setError);
-    connect(m_api, &MarketApiClient::walletReady, this, &MarketWindow::onWalletLoaded);
-    connect(m_api, &MarketApiClient::walletError, this, &MarketWindow::onWalletError);
-    connect(m_api, &MarketApiClient::tradesReady, m_tradesPage, &TradesPage::setTrades);
-    connect(m_api, &MarketApiClient::tradesError, m_tradesPage, &TradesPage::setError);
+    connect(m_marketsRepository, &MarketsRepository::marketsError, m_markets, &MarketsPage::setError);
 
-    connect(m_api, &MarketApiClient::sessionReady, this, &MarketWindow::onSessionReady);
-    connect(m_api, &MarketApiClient::sessionCleared, this, &MarketWindow::onSessionCleared);
-    connect(m_api, &MarketApiClient::authError, this, &MarketWindow::onAuthError);
+    connect(m_portfolioRepository, &PortfolioRepository::walletReady, this, &MarketWindow::onWalletLoaded);
+    connect(m_portfolioRepository, &PortfolioRepository::walletError, this, &MarketWindow::onWalletError);
+    connect(m_portfolioRepository, &PortfolioRepository::portfolioReady, m_portfolioPage, &PortfolioPage::setPositions);
+    connect(m_portfolioRepository, &PortfolioRepository::portfolioError, m_portfolioPage, &PortfolioPage::setError);
+
+    connect(m_ordersRepository, &OrdersRepository::ordersReady, m_ordersPage, &OrdersPage::setOrders);
+    connect(m_ordersRepository, &OrdersRepository::ordersError, m_ordersPage, &OrdersPage::setError);
+    connect(m_ordersRepository, &OrdersRepository::orderCancelBusyChanged, m_ordersPage, &OrdersPage::setCancelBusy);
+    connect(m_ordersRepository, &OrdersRepository::orderCancelError, m_ordersPage, &OrdersPage::setCancelError);
+    connect(m_ordersRepository, &OrdersRepository::orderCanceled, this, [this](const ApiOrder &) {
+        if (!m_sessionStore->isAuthenticated()) {
+            return;
+        }
+        m_portfolioRepository->refreshWallet();
+        m_portfolioRepository->refreshPortfolio();
+    });
+
+    connect(m_ordersPage, &OrdersPage::refreshRequested, this, [this](const QString &statusFilter) {
+        if (!m_sessionStore->isAuthenticated()) {
+            return;
+        }
+        m_ordersPage->setLoading(QStringLiteral("Loading orders from backend..."));
+        m_ordersRepository->refreshMyOrders(100, 0, statusFilter);
+    });
+    connect(m_ordersPage, &OrdersPage::cancelRequested, this, [this](const QString &orderId) {
+        if (!m_sessionStore->isAuthenticated()) {
+            return;
+        }
+        m_ordersRepository->cancelOrder(orderId);
+    });
+
+    connect(m_tradesRepository, &TradesRepository::tradesReady, m_tradesPage, &TradesPage::setTrades);
+    connect(m_tradesRepository, &TradesRepository::tradesError, m_tradesPage, &TradesPage::setError);
+
+    connect(m_sessionStore, &SessionStore::sessionReady, this, &MarketWindow::onSessionReady);
+    connect(m_sessionStore, &SessionStore::sessionCleared, this, &MarketWindow::onSessionCleared);
+    connect(m_sessionStore, &SessionStore::authError, this, &MarketWindow::onAuthError);
+
+    connect(m_realtimeClient, &MarketWsClient::topicMessageReceived, this,
+            [this](const QString &topic, const QString &event, const QJsonObject &, quint64, bool) {
+                if (!m_sessionStore->isAuthenticated()) {
+                    return;
+                }
+
+                if (!topic.startsWith(QStringLiteral("user:"))) {
+                    return;
+                }
+
+                if (event == QStringLiteral("user.wallet.updated") ||
+                    event == QStringLiteral("user.position.updated") ||
+                    event == QStringLiteral("order.changed") ||
+                    event == QStringLiteral("user.trade.created") ||
+                    event == QStringLiteral("user.snapshot")) {
+                    scheduleUserRealtimeRefresh();
+                }
+            });
+
+    connect(m_ordersRepository, &OrdersRepository::orderCreated, this, [this](const ApiOrder &) {
+        if (!m_sessionStore->isAuthenticated()) {
+            return;
+        }
+
+        m_portfolioRepository->refreshWallet();
+        m_ordersRepository->refreshMyOrders(100, 0, m_ordersPage->selectedStatusFilter());
+        m_portfolioRepository->refreshPortfolio();
+
+        if (m_stack->currentWidget() == m_tradesStack) {
+            m_tradesPage->setLoading(QStringLiteral("Refreshing your trades..."));
+            m_tradesRepository->refreshMyTrades();
+        }
+    });
 
     setProtectedPagesAuthenticated(false);
 
+    m_realtimeClient->start();
+
     m_sidebar->setStatusText(QStringLiteral("Status: loading markets..."));
-    m_markets->setLoading(QStringLiteral("Loading markets from %1…").arg(m_api->baseUrl()));
-    m_api->fetchMarkets();
+    m_markets->setLoading(QStringLiteral("Loading markets from %1…").arg(m_transport->baseUrl()));
+    m_marketsRepository->refresh();
 
     m_sidebar->setStatusText(QStringLiteral("Status: restoring session..."));
-    m_api->restoreSession();
+    m_sessionStore->restoreSession();
 
     showSection(QStringLiteral("markets"));
 }
@@ -270,25 +354,35 @@ void MarketWindow::showSection(const QString &pageId) {
     } else if (pageId == QStringLiteral("portfolio")) {
         m_stack->setCurrentWidget(m_portfolioStack);
         m_header->setTitle(QStringLiteral("Portfolio"));
+
+        if (m_sessionStore->isAuthenticated()) {
+            m_portfolioPage->setLoading(QStringLiteral("Loading portfolio from backend..."));
+            m_portfolioRepository->refreshPortfolio();
+        }
     } else if (pageId == QStringLiteral("orders")) {
         m_stack->setCurrentWidget(m_ordersStack);
         m_header->setTitle(QStringLiteral("Orders"));
+
+        if (m_sessionStore->isAuthenticated()) {
+            m_ordersPage->setLoading(QStringLiteral("Loading orders from backend..."));
+            m_ordersRepository->refreshMyOrders(100, 0, m_ordersPage->selectedStatusFilter());
+        }
     } else if (pageId == QStringLiteral("trades")) {
         m_stack->setCurrentWidget(m_tradesStack);
         m_header->setTitle(QStringLiteral("Trades"));
 
-        if (m_api->isAuthenticated()) {
-            m_tradesPage->setCurrentUserId(m_api->currentSession().userId);
+        if (m_sessionStore->isAuthenticated()) {
+            m_tradesPage->setCurrentUserId(m_sessionStore->currentSession().userId);
             m_tradesPage->setLoading(QStringLiteral("Loading your trades..."));
-            m_api->fetchMyTrades();
+            m_tradesRepository->refreshMyTrades();
         }
     } else if (pageId == QStringLiteral("profile")) {
         m_stack->setCurrentWidget(m_profileStack);
         m_header->setTitle(QStringLiteral("Profile"));
 
-        if (m_api->isAuthenticated()) {
+        if (m_sessionStore->isAuthenticated()) {
             m_profile->setStatusMessage(QStringLiteral("Refreshing wallet..."));
-            m_api->fetchWallet();
+            m_portfolioRepository->refreshWallet();
         }
     }
 
@@ -314,7 +408,7 @@ void MarketWindow::onWalletLoaded(const ApiWallet &wallet) {
 }
 
 void MarketWindow::onWalletError(const QString &message) {
-    if (!m_api->isAuthenticated()) {
+    if (!m_sessionStore->isAuthenticated()) {
         return;
     }
 
@@ -331,6 +425,8 @@ void MarketWindow::onSessionReady(const ApiSession &session) {
     m_profile->setStatusMessage(QStringLiteral("Authenticated. Loading wallet..."));
 
     m_tradesPage->setCurrentUserId(session.userId);
+    m_ordersPage->setLoading(QStringLiteral("Loading orders from backend..."));
+    m_portfolioPage->setLoading(QStringLiteral("Loading portfolio from backend..."));
 
     m_header->setAvatarText(initialsFromName(m_profileName.isEmpty() ? QStringLiteral("User") : m_profileName));
     m_header->setBalanceText(QStringLiteral("Balance: —"));
@@ -338,11 +434,16 @@ void MarketWindow::onSessionReady(const ApiSession &session) {
     setProtectedPagesAuthenticated(true);
     m_sidebar->setStatusText(QStringLiteral("Status: connected"));
 
-    m_api->fetchWallet();
+    m_realtimeClient->subscribeTopic(QStringLiteral("user:me"), true);
+    m_realtimeClient->reconnectNow();
+
+    m_portfolioRepository->refreshWallet();
+    m_ordersRepository->refreshMyOrders(100, 0, m_ordersPage->selectedStatusFilter());
+    m_portfolioRepository->refreshPortfolio();
 
     if (m_stack->currentWidget() == m_tradesStack) {
         m_tradesPage->setLoading(QStringLiteral("Loading your trades..."));
-        m_api->fetchMyTrades();
+        m_tradesRepository->refreshMyTrades();
     }
 }
 
@@ -355,12 +456,17 @@ void MarketWindow::onSessionCleared() {
     m_profile->setStatusMessage(QStringLiteral("Log in or Sign up to load your wallet."));
 
     m_tradesPage->setCurrentUserId(QString());
+    m_ordersPage->clearOrders();
+    m_portfolioPage->clearPositions();
 
     m_header->setAvatarText(initialsFromName(m_profileName));
     m_header->setBalanceText(QStringLiteral("Balance: —"));
 
     setProtectedPagesAuthenticated(false);
     m_sidebar->setStatusText(QStringLiteral("Status: guest"));
+
+    m_realtimeClient->unsubscribeTopic(QStringLiteral("user:me"));
+    m_realtimeClient->reconnectNow();
 }
 
 void MarketWindow::onAuthError(const QString &message) {
@@ -368,6 +474,25 @@ void MarketWindow::onAuthError(const QString &message) {
     m_ordersGate->setStatusMessage(message, true);
     m_tradesGate->setStatusMessage(message, true);
     m_profileGate->setStatusMessage(message, true);
+}
+
+void MarketWindow::scheduleUserRealtimeRefresh() {
+    if (m_userRealtimeRefreshQueued || !m_sessionStore->isAuthenticated()) {
+        return;
+    }
+
+    m_userRealtimeRefreshQueued = true;
+    QTimer::singleShot(75, this, [this]() {
+        m_userRealtimeRefreshQueued = false;
+        if (!m_sessionStore->isAuthenticated()) {
+            return;
+        }
+
+        m_portfolioRepository->refreshWallet();
+        m_ordersRepository->refreshMyOrders(100, 0, m_ordersPage->selectedStatusFilter());
+        m_portfolioRepository->refreshPortfolio();
+        m_tradesRepository->refreshMyTrades();
+    });
 }
 
 void MarketWindow::openLoginDialog() {
@@ -383,19 +508,19 @@ void MarketWindow::openAuthDialog(bool startOnSignUp) {
     dialog.setMode(startOnSignUp ? AuthDialog::Mode::SignUp : AuthDialog::Mode::Login);
 
     connect(&dialog, &AuthDialog::loginSubmitted, this, [this](const QString &login, const QString &password) {
-        m_api->login(login, password);
+        m_sessionStore->login(login, password);
     });
 
     connect(&dialog,
             &AuthDialog::signUpSubmitted,
             this,
             [this](const QString &email, const QString &username, const QString &password) {
-                m_api->registerUser(email, username, password);
+                m_sessionStore->registerUser(email, username, password);
             });
 
-    connect(m_api, &MarketApiClient::authBusyChanged, &dialog, &AuthDialog::setBusy);
-    connect(m_api, &MarketApiClient::authError, &dialog, &AuthDialog::setError);
-    connect(m_api, &MarketApiClient::sessionReady, &dialog, &AuthDialog::acceptSuccess);
+    connect(m_sessionStore, &SessionStore::authBusyChanged, &dialog, &AuthDialog::setBusy);
+    connect(m_sessionStore, &SessionStore::authError, &dialog, &AuthDialog::setError);
+    connect(m_sessionStore, &SessionStore::sessionReady, &dialog, &AuthDialog::acceptSuccess);
 
     dialog.exec();
 }

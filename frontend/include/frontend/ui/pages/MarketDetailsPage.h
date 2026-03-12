@@ -1,10 +1,13 @@
 #pragma once
 
-#include "../../network/MarketApiClient.h"
+#include "frontend/network/ApiTypes.h"
 
 #include <QHash>
 #include <QWidget>
 
+class MarketDetailsRepository;
+class OrdersRepository;
+class SessionStore;
 class QDoubleSpinBox;
 class QLabel;
 class QPushButton;
@@ -15,11 +18,13 @@ class MarketDetailsPage : public QWidget {
 public:
     explicit MarketDetailsPage(QWidget *parent = nullptr);
 
-    void setApiClient(MarketApiClient *api);
+    void setSessionStore(SessionStore *sessionStore);
+    void setOrdersRepository(OrdersRepository *ordersRepository);
+    void setMarketDetailsRepository(MarketDetailsRepository *marketDetailsRepository);
     void setMarket(const ApiMarket &market, const QString &preferredSelection = QString());
 
-    signals:
-        void backRequested();
+signals:
+    void backRequested();
     void loginRequested();
 
 private:
@@ -32,6 +37,8 @@ private:
     void updateSideButtons();
     void updateTicketUi();
     void updatePhotoPanel();
+    void updateMetaLabel();
+    void applyMarketDetailsSnapshot(const ApiMarketDetailsSnapshot &snapshot);
     void submitOrder();
     void clearTransientStatus();
     void applyFilledOrderToKnownPositions(const ApiOrder &order);
@@ -44,9 +51,13 @@ private:
     QString m_selectedOutcomeId;
     QString m_orderSide = QStringLiteral("BUY");
 
-    MarketApiClient *m_api = nullptr;
+    SessionStore *m_sessionStore = nullptr;
+    OrdersRepository *m_ordersRepository = nullptr;
+    MarketDetailsRepository *m_marketDetailsRepository = nullptr;
     bool m_orderBusy = false;
     QHash<QString, qint64> m_knownOwnedMicrosByOutcome;
+    ApiOrderBook m_selectedOrderBook;
+    QVector<ApiTrade> m_recentTrades;
 
     QLabel *m_questionLabel = nullptr;
 

@@ -1,5 +1,7 @@
 #include "../../include/frontend/network/MarketApiClient.h"
 
+#include "../../include/frontend/network/ApiParsers.h"
+
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -67,16 +69,6 @@ QString responseErrorMessage(QNetworkReply *reply, const QByteArray &payload) {
     return reply->errorString();
 }
 
-ApiSession sessionFromUserObject(const QJsonObject &userObject) {
-    ApiSession session;
-    session.userId = userObject.value(QStringLiteral("id")).toString();
-    session.email = userObject.value(QStringLiteral("email")).toString();
-    session.username = userObject.value(QStringLiteral("username")).toString();
-    session.role = userObject.value(QStringLiteral("role")).toString();
-    session.createdAt = userObject.value(QStringLiteral("created_at")).toString();
-    return session;
-}
-
 } // namespace
 
 MarketApiClient::MarketApiClient(QObject *parent)
@@ -85,8 +77,186 @@ MarketApiClient::MarketApiClient(QObject *parent)
     loadPersistedSession();
 }
 
+
+void MarketApiClient::fetchMarketById(const QString &marketId,
+                                      const std::function<void(const ApiMarket &)> &onSuccess,
+                                      const std::function<void(const QString &)> &onError) {
+    if (marketId.trimmed().isEmpty()) {
+        if (onError) {
+            onError(QStringLiteral("Market id is missing."));
+        }
+        return;
+    }
+
+    getJson(apiUrl(QStringLiteral("/markets/%1").arg(marketId)),
+            false,
+            [onSuccess, onError](const QJsonDocument &document) {
+                if (!document.isObject()) {
+                    if (onError) {
+                        onError(QStringLiteral("/markets/{id} did not return an object."));
+                    }
+                    return;
+                }
+
+                const auto parsed = api::parse::marketBase(document.object());
+                if (!parsed.has_value()) {
+                    if (onError) {
+                        onError(QStringLiteral("Invalid market payload from backend."));
+                    }
+                    return;
+                }
+
+                if (onSuccess) {
+                    onSuccess(*parsed);
+                }
+            },
+            [onError](int, const QString &message) {
+                if (onError) {
+                    onError(QStringLiteral("Could not load market.%1").arg(message));
+                }
+            });
+}
+
+void MarketApiClient::fetchOutcomesForMarket(const QString &marketId,
+                                             const std::function<void(const QVector<ApiOutcome> &)> &onSuccess,
+                                             const std::function<void(const QString &)> &onError) {
+    if (marketId.trimmed().isEmpty()) {
+        if (onError) {
+            onError(QStringLiteral("Market id is missing."));
+        }
+        return;
+    }
+
+    getJson(apiUrl(QStringLiteral("/markets/%1/outcomes").arg(marketId)),
+            false,
+            [onSuccess, onError](const QJsonDocument &document) {
+                if (!document.isArray()) {
+                    if (onError) {
+                        onError(QStringLiteral("/markets/{id}/outcomes did not return an array."));
+                    }
+                    return;
+                }
+
+                if (onSuccess) {
+                    onSuccess(api::parse::outcomes(document.array()));
+                }
+            },
+            [onError](int, const QString &message) {
+                if (onError) {
+                    onError(QStringLiteral("Could not load market outcomes.%1").arg(message));
+                }
+            });
+}
+
+void MarketApiClient::fetchOrderBookForOutcome(const QString &outcomeId,
+                                               int depth,
+                                               const std::function<void(const ApiOrderBook &)> &onSuccess,
+                                               const std::function<void(const QString &)> &onError) {
+    if (outcomeId.trimmed().isEmpty()) {
+        if (onError) {
+            onError(QStringLiteral("Outcome id is missing."));
+        }
+        return;
+    }
+
+    if (depth <= 0) {
+        depth = 20;
+    }
+
+    getJson(apiUrl(QStringLiteral("/outcomes/%1/orderbook?depth=%2").arg(outcomeId).arg(depth)),
+            false,
+            [onSuccess, onError](const QJsonDocument &document) {
+                if (!document.isObject()) {
+                    if (onError) {
+                        onError(QStringLiteral("/outcomes/{id}/orderbook did not return an object."));
+                    }
+                    return;
+                }
+
+                const auto parsed = api::parse::orderBook(document.object());
+                if (!parsed.has_value()) {
+                    if (onError) {
+                        onError(QStringLiteral("Invalid order book payload from backend."));
+                    }
+                    return;
+                }
+
+                if (onSuccess) {
+                    onSuccess(*parsed);
+                }
+            },
+            [onError](int, const QString &message) {
+                if (onError) {
+                    onError(QStringLiteral("Could not load order book.%1").arg(message));
+                }
+            });
+}
+
+void MarketApiClient::fetchTradesForOutcome(const QString &outcomeId,
+                                            int limit,
+                                            int offset,
+                                            const std::function<void(const QVector<ApiTrade> &)> &onSuccess,
+                                            const std::function<void(const QString &)> &onError) {
+    if (outcomeId.trimmed().isEmpty()) {
+        if (onError) {
+            onError(QStringLiteral("Outcome id is missing."));
+        }
+        return;
+    }
+
+    if (limit <= 0) {
+        limit = 20;
+    }
+    if (offset < 0) {
+        offset = 0;
+    }
+
+    getJson(apiUrl(QStringLiteral("/outcomes/%1/trades?limit=%2&offset=%3")
+                       .arg(outcomeId)
+                       .arg(limit)
+                       .arg(offset)),
+            false,
+            [onSuccess, onError](const QJsonDocument &document) {
+                if (!document.isArray()) {
+                    if (onError) {
+                        onError(QStringLiteral("/outcomes/{id}/trades did not return an array."));
+                    }
+                    return;
+                }
+
+                if (onSuccess) {
+                    onSuccess(api::parse::trades(document.array()));
+                }
+            },
+            [onError](int, const QString &message) {
+                if (onError) {
+                    onError(QStringLiteral("Could not load outcome trades.%1").arg(message));
+                }
+            });
+}
+
 QString MarketApiClient::baseUrl() const {
     return m_baseUrl.toString();
+}
+
+QUrl MarketApiClient::websocketUrl() const {
+    QUrl url = m_baseUrl;
+
+    if (url.scheme() == QStringLiteral("https")) {
+        url.setScheme(QStringLiteral("wss"));
+    } else if (url.scheme() == QStringLiteral("http")) {
+        url.setScheme(QStringLiteral("ws"));
+    } else if (url.scheme().trimmed().isEmpty()) {
+        url.setScheme(QStringLiteral("wss"));
+    }
+
+    url.setPath(QStringLiteral("/ws"));
+    url.setQuery(QString());
+    return url;
+}
+
+QString MarketApiClient::accessToken() const {
+    return m_accessToken;
 }
 
 bool MarketApiClient::isAuthenticated() const {
@@ -280,12 +450,6 @@ bool MarketApiClient::storeSessionFromAuthResponse(const QJsonDocument &document
     }
 
     const QJsonObject root = document.object();
-    const QJsonObject userObject = root.value(QStringLiteral("user")).toObject();
-
-    if (userObject.isEmpty()) {
-        return false;
-    }
-
     const QString accessToken = root.value(QStringLiteral("access_token")).toString();
     const QString refreshToken = root.value(QStringLiteral("refresh_token")).toString();
 
@@ -293,13 +457,17 @@ bool MarketApiClient::storeSessionFromAuthResponse(const QJsonDocument &document
         return false;
     }
 
-    m_accessToken = accessToken;
+    const auto session = api::parse::sessionFromAuthObject(root);
+    if (!session.has_value()) {
+        return false;
+    }
 
+    m_accessToken = accessToken;
     if (!refreshToken.trimmed().isEmpty()) {
         m_refreshToken = refreshToken;
     }
 
-    m_session = sessionFromUserObject(userObject);
+    m_session = *session;
     persistSession();
 
     if (emitSignal) {
@@ -314,14 +482,12 @@ bool MarketApiClient::storeSessionFromUserResponse(const QJsonDocument &document
         return false;
     }
 
-    const QJsonObject root = document.object();
-    const ApiSession session = sessionFromUserObject(root);
-
-    if (session.userId.trimmed().isEmpty()) {
+    const auto session = api::parse::sessionFromUserObject(document.object());
+    if (!session.has_value()) {
         return false;
     }
 
-    m_session = session;
+    m_session = *session;
     persistSession();
 
     if (emitSignal) {
@@ -471,7 +637,11 @@ void MarketApiClient::logout() {
              });
 }
 
-void MarketApiClient::finishPendingMarketRequest() {
+void MarketApiClient::finishPendingMarketRequest(const int requestGeneration) {
+    if (requestGeneration != m_marketsRequestGeneration) {
+        return;
+    }
+
     if (m_pendingMarketRequests <= 0) {
         return;
     }
@@ -483,12 +653,17 @@ void MarketApiClient::finishPendingMarketRequest() {
 }
 
 void MarketApiClient::fetchMarkets() {
+    const int requestGeneration = ++m_marketsRequestGeneration;
     m_markets.clear();
     m_pendingMarketRequests = 0;
 
-    getJson(apiUrl(QStringLiteral("/markets?status=OPEN&limit=100")),
+    getJson(apiUrl(QStringLiteral("/markets?limit=100")),
             false,
-            [this](const QJsonDocument &document) {
+            [this, requestGeneration](const QJsonDocument &document) {
+                if (requestGeneration != m_marketsRequestGeneration) {
+                    return;
+                }
+
                 if (!document.isArray()) {
                     emit marketsError(QStringLiteral("/markets did not return an array."));
                     return;
@@ -504,45 +679,43 @@ void MarketApiClient::fetchMarkets() {
                 m_pendingMarketRequests = marketsArray.size();
 
                 for (const QJsonValue &marketValue : marketsArray) {
-                    const QJsonObject marketObject = marketValue.toObject();
-
-                    ApiMarket market;
-                    market.id = marketObject.value(QStringLiteral("id")).toString();
-                    market.question = marketObject.value(QStringLiteral("question")).toString();
-                    market.status = marketObject.value(QStringLiteral("status")).toString();
-                    market.createdAt = marketObject.value(QStringLiteral("created_at")).toString();
+                    const auto parsedMarket = api::parse::marketBase(marketValue.toObject());
+                    if (!parsedMarket.has_value()) {
+                        finishPendingMarketRequest(requestGeneration);
+                        continue;
+                    }
 
                     const int marketIndex = m_markets.size();
-                    m_markets.push_back(market);
+                    m_markets.push_back(*parsedMarket);
 
-                    getJson(apiUrl(QStringLiteral("/markets/%1/outcomes").arg(market.id)),
+                    getJson(apiUrl(QStringLiteral("/markets/%1/outcomes").arg(parsedMarket->id)),
                             false,
-                            [this, marketIndex](const QJsonDocument &outcomesDocument) {
+                            [this, requestGeneration, marketIndex](const QJsonDocument &outcomesDocument) {
+                                if (requestGeneration != m_marketsRequestGeneration) {
+                                    return;
+                                }
+
                                 if (!outcomesDocument.isArray()) {
-                                    finishPendingMarketRequest();
+                                    finishPendingMarketRequest(requestGeneration);
+                                    return;
+                                }
+
+                                if (marketIndex < 0 || marketIndex >= m_markets.size()) {
+                                    finishPendingMarketRequest(requestGeneration);
                                     return;
                                 }
 
                                 auto &market = m_markets[marketIndex];
-                                const QJsonArray outcomesArray = outcomesDocument.array();
-                                const int fallbackPercent = fallbackPercentForOutcomeCount(outcomesArray.size());
+                                market.outcomes = api::parse::outcomes(outcomesDocument.array());
+                                const int fallbackPercent =
+                                    fallbackPercentForOutcomeCount(market.outcomes.size());
 
-                                market.outcomes.clear();
-                                market.outcomes.reserve(outcomesArray.size());
-
-                                for (const QJsonValue &outcomeValue : outcomesArray) {
-                                    const QJsonObject outcomeObject = outcomeValue.toObject();
-
-                                    ApiOutcome outcome;
-                                    outcome.id = outcomeObject.value(QStringLiteral("id")).toString();
-                                    outcome.title = outcomeObject.value(QStringLiteral("title")).toString();
+                                for (ApiOutcome &outcome : market.outcomes) {
                                     outcome.pricePercent = fallbackPercent;
-
-                                    market.outcomes.push_back(outcome);
                                 }
 
                                 if (market.outcomes.isEmpty()) {
-                                    finishPendingMarketRequest();
+                                    finishPendingMarketRequest(requestGeneration);
                                     return;
                                 }
 
@@ -553,36 +726,45 @@ void MarketApiClient::fetchMarkets() {
 
                                     getJson(apiUrl(QStringLiteral("/outcomes/%1/orderbook?depth=1").arg(outcomeId)),
                                             false,
-                                            [this, marketIndex, outcomeIndex](const QJsonDocument &orderBookDocument) {
-                                                if (orderBookDocument.isObject()) {
-                                                    bool hasPrice = false;
-                                                    const int price =
-                                                        bestIndicativePrice(orderBookDocument.object(), &hasPrice);
+                                            [this, requestGeneration, marketIndex, outcomeIndex](const QJsonDocument &orderBookDocument) {
+                                                if (requestGeneration != m_marketsRequestGeneration) {
+                                                    return;
+                                                }
 
-                                                    if (hasPrice) {
-                                                        auto &outcome = m_markets[marketIndex].outcomes[outcomeIndex];
-                                                        outcome.pricePercent = price;
-                                                        outcome.hasLivePrice = true;
+                                                if (marketIndex >= 0 && marketIndex < m_markets.size()) {
+                                                    auto &outcomes = m_markets[marketIndex].outcomes;
+                                                    if (outcomeIndex >= 0 && outcomeIndex < outcomes.size() && orderBookDocument.isObject()) {
+                                                        bool hasPrice = false;
+                                                        const int price =
+                                                            bestIndicativePrice(orderBookDocument.object(), &hasPrice);
+
+                                                        if (hasPrice) {
+                                                            auto &outcome = outcomes[outcomeIndex];
+                                                            outcome.pricePercent = price;
+                                                            outcome.hasLivePrice = true;
+                                                        }
                                                     }
                                                 }
 
-                                                finishPendingMarketRequest();
+                                                finishPendingMarketRequest(requestGeneration);
                                             },
-                                            [this](int, const QString &) {
-                                                finishPendingMarketRequest();
+                                            [this, requestGeneration](int, const QString &) {
+                                                finishPendingMarketRequest(requestGeneration);
                                             });
                                 }
 
-                                finishPendingMarketRequest();
+                                finishPendingMarketRequest(requestGeneration);
                             },
-                            [this](int, const QString &) {
-                                finishPendingMarketRequest();
+                            [this, requestGeneration](int, const QString &) {
+                                finishPendingMarketRequest(requestGeneration);
                             });
                 }
             },
-            [this](int, const QString &message) {
-                emit marketsError(QStringLiteral("Could not load markets from %1.\n%2")
-                                      .arg(baseUrl(), message));
+            [this, requestGeneration](int, const QString &message) {
+                if (requestGeneration != m_marketsRequestGeneration) {
+                    return;
+                }
+                emit marketsError(QStringLiteral("Could not load markets from %1.%2").arg(baseUrl(), message));
             });
 }
 
@@ -600,15 +782,13 @@ void MarketApiClient::fetchWallet() {
                     return;
                 }
 
-                const QJsonObject object = document.object();
+                const auto walletValue = api::parse::wallet(document.object());
+                if (!walletValue.has_value()) {
+                    emit walletError(QStringLiteral("Invalid wallet payload from backend."));
+                    return;
+                }
 
-                ApiWallet wallet;
-                wallet.userId = object.value(QStringLiteral("user_id")).toString();
-                wallet.available = object.value(QStringLiteral("available")).toVariant().toLongLong();
-                wallet.reserved = object.value(QStringLiteral("reserved")).toVariant().toLongLong();
-                wallet.updatedAt = object.value(QStringLiteral("updated_at")).toString();
-
-                emit walletReady(wallet);
+                emit walletReady(*walletValue);
             },
             [this](int statusCode, const QString &message) {
                 if (statusCode == 401 && !m_refreshToken.trimmed().isEmpty()) {
@@ -645,37 +825,12 @@ void MarketApiClient::fetchMyTrades(int limit, int offset) {
                     return;
                 }
 
-                QVector<ApiTrade> trades;
-                const QJsonArray tradesArray = document.array();
-                trades.reserve(tradesArray.size());
-
-                for (const QJsonValue &tradeValue : tradesArray) {
-                    if (!tradeValue.isObject()) {
-                        continue;
-                    }
-
-                    const QJsonObject object = tradeValue.toObject();
-
-                    ApiTrade trade;
-                    trade.id = object.value(QStringLiteral("id")).toString();
-                    trade.outcomeId = object.value(QStringLiteral("outcome_id")).toString();
-                    trade.makerUserId = object.value(QStringLiteral("maker_user_id")).toString();
-                    trade.takerUserId = object.value(QStringLiteral("taker_user_id")).toString();
-                    trade.makerOrderId = object.value(QStringLiteral("maker_order_id")).toString();
-                    trade.takerOrderId = object.value(QStringLiteral("taker_order_id")).toString();
-                    trade.priceBasisPoints = object.value(QStringLiteral("price_bp")).toInt();
-                    trade.quantityMicros = object.value(QStringLiteral("qty_micros")).toVariant().toLongLong();
-                    trade.createdAt = object.value(QStringLiteral("created_at")).toString();
-
-                    trades.push_back(trade);
-                }
-
-                emit tradesReady(trades);
+                emit tradesReady(api::parse::trades(document.array()));
             },
-            [this](int statusCode, const QString &message) {
+            [this, limit, offset](int statusCode, const QString &message) {
                 if (statusCode == 401 && !m_refreshToken.trimmed().isEmpty()) {
                     refreshSession(
-                        [this]() { fetchMyTrades(); },
+                        [this, limit, offset]() { fetchMyTrades(limit, offset); },
                         [this](const QString &refreshMessage) {
                             emit tradesError(QStringLiteral("Session expired.\n%1").arg(refreshMessage));
                         });
@@ -683,6 +838,122 @@ void MarketApiClient::fetchMyTrades(int limit, int offset) {
                 }
 
                 emit tradesError(QStringLiteral("Could not load trades.\n%1").arg(message));
+            });
+}
+
+void MarketApiClient::fetchMyOrders(int limit, int offset, const QString &status) {
+    if (!isAuthenticated()) {
+        emit ordersError(QStringLiteral("Log in or Sign up to load your orders."));
+        return;
+    }
+
+    if (limit <= 0) {
+        limit = 100;
+    }
+    if (offset < 0) {
+        offset = 0;
+    }
+
+    QString path = QStringLiteral("/me/orders?limit=%1&offset=%2").arg(limit).arg(offset);
+    if (!status.trimmed().isEmpty()) {
+        path += QStringLiteral("&status=%1").arg(QString::fromUtf8(QUrl::toPercentEncoding(status.trimmed())));
+    }
+
+    getJson(apiUrl(path),
+            true,
+            [this](const QJsonDocument &document) {
+                if (!document.isArray()) {
+                    emit ordersError(QStringLiteral("/me/orders did not return an array."));
+                    return;
+                }
+
+                emit ordersReady(api::parse::orders(document.array()));
+            },
+            [this, limit, offset, status](int statusCode, const QString &message) {
+                if (statusCode == 401 && !m_refreshToken.trimmed().isEmpty()) {
+                    refreshSession(
+                        [this, limit, offset, status]() { fetchMyOrders(limit, offset, status); },
+                        [this](const QString &refreshMessage) {
+                            emit ordersError(QStringLiteral("Session expired.\n%1").arg(refreshMessage));
+                        });
+                    return;
+                }
+
+                emit ordersError(QStringLiteral("Could not load orders.\n%1").arg(message));
+            });
+}
+
+void MarketApiClient::fetchPortfolio(int limit, int offset) {
+    if (!isAuthenticated()) {
+        emit portfolioError(QStringLiteral("Log in or Sign up to load your portfolio."));
+        return;
+    }
+
+    if (limit <= 0) {
+        limit = 100;
+    }
+    if (offset < 0) {
+        offset = 0;
+    }
+
+    getJson(apiUrl(QStringLiteral("/portfolio?limit=%1&offset=%2").arg(limit).arg(offset)),
+            true,
+            [this](const QJsonDocument &document) {
+                if (!document.isArray()) {
+                    emit portfolioError(QStringLiteral("/portfolio did not return an array."));
+                    return;
+                }
+
+                emit portfolioReady(api::parse::portfolioPositions(document.array()));
+            },
+            [this, limit, offset](int statusCode, const QString &message) {
+                if (statusCode == 401 && !m_refreshToken.trimmed().isEmpty()) {
+                    refreshSession(
+                        [this, limit, offset]() { fetchPortfolio(limit, offset); },
+                        [this](const QString &refreshMessage) {
+                            emit portfolioError(QStringLiteral("Session expired.\n%1").arg(refreshMessage));
+                        });
+                    return;
+                }
+
+                emit portfolioError(QStringLiteral("Could not load portfolio.\n%1").arg(message));
+            });
+}
+
+void MarketApiClient::fetchLedger(int limit, int offset) {
+    if (!isAuthenticated()) {
+        emit ledgerError(QStringLiteral("Log in or Sign up to load your ledger."));
+        return;
+    }
+
+    if (limit <= 0) {
+        limit = 100;
+    }
+    if (offset < 0) {
+        offset = 0;
+    }
+
+    getJson(apiUrl(QStringLiteral("/ledger?limit=%1&offset=%2").arg(limit).arg(offset)),
+            true,
+            [this](const QJsonDocument &document) {
+                if (!document.isArray()) {
+                    emit ledgerError(QStringLiteral("/ledger did not return an array."));
+                    return;
+                }
+
+                emit ledgerReady(api::parse::portfolioLedgerEntries(document.array()));
+            },
+            [this, limit, offset](int statusCode, const QString &message) {
+                if (statusCode == 401 && !m_refreshToken.trimmed().isEmpty()) {
+                    refreshSession(
+                        [this, limit, offset]() { fetchLedger(limit, offset); },
+                        [this](const QString &refreshMessage) {
+                            emit ledgerError(QStringLiteral("Session expired.\n%1").arg(refreshMessage));
+                        });
+                    return;
+                }
+
+                emit ledgerError(QStringLiteral("Could not load ledger.\n%1").arg(message));
             });
 }
 
@@ -719,15 +990,13 @@ void MarketApiClient::adminDepositToCurrentUser(qint64 amount) {
                      return;
                  }
 
-                 const QJsonObject object = document.object();
+                 const auto walletValue = api::parse::wallet(document.object());
+                 if (!walletValue.has_value()) {
+                     emit depositError(QStringLiteral("Invalid deposit response from backend."));
+                     return;
+                 }
 
-                 ApiWallet wallet;
-                 wallet.userId = object.value(QStringLiteral("user_id")).toString();
-                 wallet.available = object.value(QStringLiteral("available")).toVariant().toLongLong();
-                 wallet.reserved = object.value(QStringLiteral("reserved")).toVariant().toLongLong();
-                 wallet.updatedAt = object.value(QStringLiteral("updated_at")).toString();
-
-                 emit depositSucceeded(wallet);
+                 emit depositSucceeded(*walletValue);
              },
              [this](int statusCode, const QString &message) {
                  emit depositBusyChanged(false);
@@ -793,26 +1062,77 @@ void MarketApiClient::createOrder(const QString &outcomeId,
                      return;
                  }
 
-                 const QJsonObject object = document.object();
+                 const auto orderValue = api::parse::order(document.object());
+                 if (!orderValue.has_value()) {
+                     emit orderError(QStringLiteral("Invalid order payload from backend."));
+                     return;
+                 }
 
-                 ApiOrder order;
-                 order.id = object.value(QStringLiteral("id")).toString();
-                 order.userId = object.value(QStringLiteral("user_id")).toString();
-                 order.outcomeId = object.value(QStringLiteral("outcome_id")).toString();
-                 order.side = object.value(QStringLiteral("side")).toString();
-                 order.priceBasisPoints = object.value(QStringLiteral("price_bp")).toInt();
-                 order.quantityTotalMicros =
-                     object.value(QStringLiteral("qty_total_micros")).toVariant().toLongLong();
-                 order.quantityRemainingMicros =
-                     object.value(QStringLiteral("qty_remaining_micros")).toVariant().toLongLong();
-                 order.status = object.value(QStringLiteral("status")).toString();
-                 order.createdAt = object.value(QStringLiteral("created_at")).toString();
-                 order.updatedAt = object.value(QStringLiteral("updated_at")).toString();
-
-                 emit orderCreated(order);
+                 emit orderCreated(*orderValue);
              },
              [this](int, const QString &message) {
                  emit orderBusyChanged(false);
                  emit orderError(QStringLiteral("Could not place order.\n%1").arg(message));
              });
+}
+
+void MarketApiClient::cancelOrder(const QString &orderId) {
+    if (!isAuthenticated()) {
+        emit orderCancelError(QStringLiteral("Log in or Sign up to cancel orders."));
+        return;
+    }
+
+    const QString normalizedId = orderId.trimmed();
+    if (normalizedId.isEmpty()) {
+        emit orderCancelError(QStringLiteral("Order id is missing."));
+        return;
+    }
+
+    emit orderCancelBusyChanged(true);
+
+    QNetworkRequest request(apiUrl(QStringLiteral("/orders/%1").arg(normalizedId)));
+    addCommonHeaders(request, true);
+
+    auto *reply = m_manager.deleteResource(request);
+    ignoreSslErrorsIfNeeded(reply);
+
+    QObject::connect(reply, &QNetworkReply::finished, this, [this, reply, normalizedId]() {
+        const int statusCode = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+        const QByteArray payload = reply->readAll();
+        const QString errorMessage = responseErrorMessage(reply, payload);
+        reply->deleteLater();
+
+        if (reply->error() != QNetworkReply::NoError) {
+            emit orderCancelBusyChanged(false);
+
+            if (statusCode == 401 && !m_refreshToken.trimmed().isEmpty()) {
+                refreshSession(
+                    [this, normalizedId]() { cancelOrder(normalizedId); },
+                    [this](const QString &refreshMessage) {
+                        emit orderCancelError(QStringLiteral("Session expired.\n%1").arg(refreshMessage));
+                    });
+                return;
+            }
+
+            emit orderCancelError(QStringLiteral("Could not cancel order.\n%1").arg(errorMessage));
+            return;
+        }
+
+        QJsonParseError parseError{};
+        const QJsonDocument document = QJsonDocument::fromJson(payload, &parseError);
+        emit orderCancelBusyChanged(false);
+
+        if (parseError.error != QJsonParseError::NoError || !document.isObject()) {
+            emit orderCancelError(QStringLiteral("Invalid cancel response from backend."));
+            return;
+        }
+
+        const auto orderValue = api::parse::order(document.object());
+        if (!orderValue.has_value()) {
+            emit orderCancelError(QStringLiteral("Invalid canceled order payload from backend."));
+            return;
+        }
+
+        emit orderCanceled(*orderValue);
+    });
 }

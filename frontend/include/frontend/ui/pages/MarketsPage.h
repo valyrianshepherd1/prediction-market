@@ -4,8 +4,10 @@
 
 #include <QWidget>
 
-class QLabel;
+class QComboBox;
 class QGridLayout;
+class QLabel;
+class QLineEdit;
 class QScrollArea;
 
 class MarketsPage : public QWidget {
@@ -25,9 +27,12 @@ private:
     void clearCards();
     void render();
     void addCard(const ApiMarket &market);
+    bool matchesFilters(const ApiMarket &market) const;
 
     QVector<ApiMarket> m_allMarkets;
     QLabel *m_statusLabel = nullptr;
+    QLineEdit *m_searchEdit = nullptr;
+    QComboBox *m_statusFilter = nullptr;
     QScrollArea *m_scroll = nullptr;
     QWidget *m_container = nullptr;
     QGridLayout *m_grid = nullptr;
