@@ -1,9 +1,14 @@
 #include <QApplication>
-#include <QLabel>
 
-int main(int argc, char** argv) {
+#include "app/MarketWindow.h"
+
+int main(int argc, char *argv[]) {
     QApplication app(argc, argv);
-    QLabel label("Hello Qt (MSYS2)");
-    label.show();
+    app.setApplicationName(QStringLiteral("PreDgict"));
+    app.setApplicationDisplayName(QStringLiteral("PreDgict"));
+
+    MarketWindow window;
+    window.showMaximized();
+
     return app.exec();
 }

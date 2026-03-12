@@ -35,12 +35,30 @@ OrderRow rowToOrder(const Result &r, std::size_t i) {
 }
 
 // ceil(qty * price_bp / 10000)
-std::int64_t calcReserveCash(std::int64_t qtyMicros, int priceBp) {
-    __int128 num = static_cast<__int128>(qtyMicros) * static_cast<__int128>(priceBp);
-    num = (num + 9999) / 10000;
-    if (num > std::numeric_limits<std::int64_t>::max())
-        return std::numeric_limits<std::int64_t>::max();
-    return static_cast<std::int64_t>(num);
+    std::int64_t calcReserveCash(std::int64_t qtyMicros, int priceBp) {
+    if (qtyMicros <= 0 || priceBp <= 0) {
+        return 0;
+    }
+
+    constexpr std::int64_t denom = 10000;
+    const auto maxValue = (std::numeric_limits<std::int64_t>::max)();
+
+    const std::int64_t wholeUnits = qtyMicros / denom;
+    const std::int64_t remainder = qtyMicros % denom;
+
+    if (wholeUnits > maxValue / static_cast<std::int64_t>(priceBp)) {
+        return maxValue;
+    }
+
+    const std::int64_t wholePart = wholeUnits * static_cast<std::int64_t>(priceBp);
+    const std::int64_t fractionalPart =
+        (remainder * static_cast<std::int64_t>(priceBp) + denom - 1) / denom;
+
+    if (wholePart > maxValue - fractionalPart) {
+        return maxValue;
+    }
+
+    return wholePart + fractionalPart;
 }
 
 // Compatibility wrapper:

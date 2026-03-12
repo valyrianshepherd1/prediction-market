@@ -4,10 +4,30 @@ set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTOUIC ON)
 set(CMAKE_AUTORCC ON)
 
-find_package(Qt6 REQUIRED COMPONENTS Widgets)
+find_package(Qt6 REQUIRED COMPONENTS Widgets Network)
 
 add_executable(frontend_app
         src/main.cpp
+        src/app/MarketWindow.h
+        src/app/MarketWindow.cpp
+        src/ui/HeaderBar.h
+        src/ui/HeaderBar.cpp
+        src/ui/pages/HomePage.h
+        src/ui/pages/HomePage.cpp
+        src/ui/pages/MarketsPage.h
+        src/ui/pages/MarketsPage.cpp
+        src/network/MarketApiClient.h
+        src/network/MarketApiClient.cpp
+        src/ui/MarketCardWidget.h
+        src/ui/MarketCardWidget.cpp
+        src/ui/Sidebar.h
+        src/ui/Sidebar.cpp
+        src/ui/pages/ProfilePage.h
+        src/ui/pages/ProfilePage.cpp
+        src/ui/pages/TradesPage.h
+        src/ui/pages/TradesPage.cpp
+        src/ui/pages/TradesPage.h
+        src/ui/pages/TradesPage.cpp
 )
 
-target_link_libraries(frontend_app PRIVATE Qt6::Widgets)
+target_link_libraries(frontend_app PRIVATE Qt6::Widgets Qt6::Network)
