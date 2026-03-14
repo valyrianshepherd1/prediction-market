@@ -19,6 +19,7 @@ using TransactionPtr = std::shared_ptr<drogon::orm::Transaction>;
 
 namespace {
 
+// Преобразует строку результата запроса в данные ордера.
 OrderRow rowToOrder(const Result &r, std::size_t i) {
     OrderRow o;
     o.id = r[i]["id"].as<std::string>();
@@ -34,8 +35,8 @@ OrderRow rowToOrder(const Result &r, std::size_t i) {
     return o;
 }
 
-// ceil(qty * price_bp / 10000)
-    std::int64_t calcReserveCash(std::int64_t qtyMicros, int priceBp) {
+// Считает сумму резерва для BUY-ордера с округлением вверх.
+std::int64_t calcReserveCash(std::int64_t qtyMicros, int priceBp) {
     if (qtyMicros <= 0 || priceBp <= 0) {
         return 0;
     }
@@ -61,13 +62,11 @@ OrderRow rowToOrder(const Result &r, std::size_t i) {
     return wholePart + fractionalPart;
 }
 
-// Compatibility wrapper:
-// - If pm::matchTakerOrderInTx expects TransactionPtr -> we pass ctx->tx.
-// - If it expects const drogon::orm::Transaction& -> we pass *ctx->tx.
-// This fixes the exact clangd error you saw.
+// Подбирает совместимый вызов matching для разных вариантов сигнатуры транзакции.
 template <class T>
 inline constexpr bool always_false_v = false;
 
+// Вызывает matching с подходящей сигнатурой транзакции.
 template <class Tx>
 void matchTakerCompat(const Tx &tx,
                       const std::string &takerOrderId,
@@ -99,8 +98,10 @@ void matchTakerCompat(const Tx &tx,
 
 } // namespace
 
+// Инициализирует репозиторий ордеров подключением к базе данных.
 OrderRepository::OrderRepository(DbClientPtr db) : db_(std::move(db)) {}
 
+// Создаёт ордер, резервирует активы и пытается сразу сматчить его.
 void OrderRepository::createOrderWithReservation(const std::string &userId,
                                                  const std::string &outcomeId,
                                                  const std::string &side,
@@ -132,6 +133,7 @@ void OrderRepository::createOrderWithReservation(const std::string &userId,
     auto ctx = std::make_shared<Ctx>(
         Ctx{nullptr, completion, userId, outcomeId, side, priceBp, qtyMicros});
 
+    // Запускает транзакцию для создания ордера, резерва и matching.
     db_->newTransactionAsync([ctx](const TransactionPtr &tx) {
         if (!tx) {
             return ctx->completion->onBizErr(
@@ -165,7 +167,7 @@ void OrderRepository::createOrderWithReservation(const std::string &userId,
         if (ctx->qtyMicros <= 0)
             return bizFail(drogon::k400BadRequest, "qty_micros must be > 0");
 
-        // 1) validate outcome exists + market is OPEN
+        // Проверяет, что исход существует и его рынок открыт для торговли.
         ctx->tx->execSqlAsync(
             "SELECT m.status AS status "
             "FROM outcomes o JOIN markets m ON m.id = o.market_id "
@@ -175,7 +177,7 @@ void OrderRepository::createOrderWithReservation(const std::string &userId,
                 const auto st = r[0]["status"].as<std::string>();
                 if (st != "OPEN") return bizFail(drogon::k409Conflict, "market is not OPEN");
 
-                // 2) insert order
+                // Создаёт новый ордер и возвращает его начальное состояние.
                 static constexpr std::string_view kInsert =
                     "INSERT INTO orders (user_id, outcome_id, side, price_bp, qty_total_micros, qty_remaining_micros, status) "
                     "VALUES ($1::uuid, $2::uuid, $3, $4, $5, $5, 'OPEN') "
@@ -192,7 +194,7 @@ void OrderRepository::createOrderWithReservation(const std::string &userId,
                         const bool takerIsBuy = (ctx->side == "BUY");
 
                         auto afterReserve = [ctx, dbFail]() mutable {
-                            // 4) MATCH after reservation (both BUY and SELL)
+                            // Запускает matching после успешного резервирования активов.
                             matchTakerCompat(
                                 ctx->tx,
                                 ctx->completion->created.id,
@@ -200,9 +202,9 @@ void OrderRepository::createOrderWithReservation(const std::string &userId,
                                 ctx->outcomeId,
                                 ctx->side,
                                 ctx->priceBp,
-                                100, // maxTrades per request
+                                100, // Максимальное число сделок за один запуск matching.
                                 [ctx, dbFail]() mutable {
-                                    // reload final order state
+                                    // Перечитывает финальное состояние ордера после matching.
                                     ctx->tx->execSqlAsync(
                                         "SELECT id::text AS id, user_id::text AS user_id, outcome_id::text AS outcome_id, "
                                         "side, price_bp, qty_total_micros, qty_remaining_micros, status, "
@@ -222,15 +224,15 @@ void OrderRepository::createOrderWithReservation(const std::string &userId,
                                 });
                         };
 
-                        // 3) reserve cash or shares + ledger
+                        // Резервирует деньги или доли и пишет соответствующую запись в ledger.
                         if (takerIsBuy) {
                             const std::int64_t reserve = calcReserveCash(ctx->qtyMicros, ctx->priceBp);
 
-                            // ensure wallet exists
+                            // Гарантирует наличие кошелька перед резервированием денег.
                             ctx->tx->execSqlAsync(
                                 "INSERT INTO wallets(user_id) VALUES($1::uuid) ON CONFLICT DO NOTHING",
                                 [ctx, bizFail, dbFail, reserve, afterReserve](const Result &) mutable {
-                                    // reserve funds
+                                    // Переносит сумму из available в reserved у кошелька покупателя.
                                     ctx->tx->execSqlAsync(
                                         "UPDATE wallets "
                                         "SET available = available - $2, reserved = reserved + $2, updated_at = now() "
@@ -239,7 +241,7 @@ void OrderRepository::createOrderWithReservation(const std::string &userId,
                                             if (u.affectedRows() != 1)
                                                 return bizFail(drogon::k409Conflict, "insufficient funds");
 
-                                            // ledger (RESERVE)
+                                            // Добавляет запись RESERVE в cash_ledger для BUY-ордера.
                                             ctx->tx->execSqlAsync(
                                                 "INSERT INTO cash_ledger(user_id, kind, delta_available, delta_reserved, ref_type, ref_id) "
                                                 "VALUES($1::uuid, 'RESERVE', $2, $3, 'ORDER', $4::uuid)",
@@ -257,7 +259,7 @@ void OrderRepository::createOrderWithReservation(const std::string &userId,
                                 dbFail,
                                 ctx->userId);
                         } else {
-                            // SELL: reserve shares
+                            // Резервирует доли продавца в позиции по выбранному исходу.
                             ctx->tx->execSqlAsync(
                                 "INSERT INTO positions(user_id, outcome_id) VALUES($1::uuid, $2::uuid) ON CONFLICT DO NOTHING",
                                 [ctx, bizFail, dbFail, afterReserve](const Result &) mutable {
@@ -301,6 +303,7 @@ void OrderRepository::createOrderWithReservation(const std::string &userId,
     });
 }
 
+// Возвращает стакан ордеров для выбранного исхода.
 void OrderRepository::getOrderBook(const std::string &outcomeId,
                                    int depth,
                                    std::function<void(OrderBook)> onOk,
@@ -333,6 +336,7 @@ void OrderRepository::getOrderBook(const std::string &outcomeId,
 
     auto db = db_;
 
+    // Загружает лучшие BUY-ордера для верхней части стакана.
     db->execSqlAsync(std::string(kSelectBuy),
         [db, ctx, outcomeId, depth](const Result &r) {
             ctx->book.buy.reserve(r.size());
@@ -340,6 +344,7 @@ void OrderRepository::getOrderBook(const std::string &outcomeId,
                 ctx->book.buy.push_back(rowToOrder(r, i));
             }
 
+            // Загружает лучшие SELL-ордера для второй стороны стакана.
             db->execSqlAsync(std::string(kSelectSell),
                 [ctx](const Result &r2) {
                     ctx->book.sell.reserve(r2.size());
@@ -355,6 +360,7 @@ void OrderRepository::getOrderBook(const std::string &outcomeId,
         outcomeId, depth);
 }
 
+// Загружает конкретный ордер пользователя.
 void OrderRepository::getOrderForUser(const std::string &userId,
                                       const std::string &orderId,
                                       std::function<void(OrderRow)> onOk,
@@ -380,6 +386,7 @@ void OrderRepository::getOrderForUser(const std::string &userId,
         orderId, userId);
 }
 
+// Возвращает список ордеров пользователя с необязательной фильтрацией по статусу.
 void OrderRepository::listOrdersForUser(const std::string &userId,
                                         const std::optional<std::string> &status,
                                         int limit,
@@ -424,6 +431,7 @@ void OrderRepository::listOrdersForUser(const std::string &userId,
     }
 }
 
+// Отменяет ордер и освобождает оставшийся резерв денег или долей.
 void OrderRepository::cancelOrderWithRelease(const std::string &userId,
                                              const std::string &orderId,
                                              std::function<void(OrderRow)> onOk,
@@ -438,7 +446,7 @@ void OrderRepository::cancelOrderWithRelease(const std::string &userId,
         std::function<void(const DrogonDbException &)> onErr;
 
         OrderRow order;
-        std::int64_t releaseAmount{0}; // cash for BUY or shares for SELL
+        std::int64_t releaseAmount{0}; // Сумма денег для BUY или количество долей для SELL.
     };
 
     auto ctx = std::make_shared<Ctx>(Ctx{
@@ -452,6 +460,7 @@ void OrderRepository::cancelOrderWithRelease(const std::string &userId,
         0
     });
 
+    // Запускает транзакцию для отмены ордера и освобождения резерва.
     db_->newTransactionAsync([ctx](const TransactionPtr &tx) {
         ctx->tx = tx;
 
@@ -473,6 +482,7 @@ void OrderRepository::cancelOrderWithRelease(const std::string &userId,
             "WHERE id = $1::uuid AND user_id = $2::uuid "
             "FOR UPDATE";
 
+        // Блокирует ордер пользователя и загружает его текущее состояние.
         ctx->tx->execSqlAsync(
             std::string(kSelectForUpdate),
             [ctx, bizFail, txFail](const Result &r) mutable {
@@ -483,13 +493,13 @@ void OrderRepository::cancelOrderWithRelease(const std::string &userId,
                     return bizFail(drogon::k409Conflict, "order is not cancelable");
                 }
 
-                // how much to release
+                // Вычисляет объём средств или долей, который нужно освободить.
                 if (ctx->order.qty_remaining_micros <= 0) {
                     ctx->releaseAmount = 0;
                 } else if (ctx->order.side == "BUY") {
                     ctx->releaseAmount = calcReserveCash(ctx->order.qty_remaining_micros, ctx->order.price_bp);
                 } else {
-                    ctx->releaseAmount = ctx->order.qty_remaining_micros; // shares
+                    ctx->releaseAmount = ctx->order.qty_remaining_micros; // Количество долей.
                 }
 
                 static constexpr std::string_view kCancelReturning =
@@ -500,20 +510,21 @@ void OrderRepository::cancelOrderWithRelease(const std::string &userId,
                     "side, price_bp, qty_total_micros, qty_remaining_micros, status, "
                     "created_at::text AS created_at, updated_at::text AS updated_at";
 
+                // Помечает ордер как CANCELED и возвращает обновлённую запись.
                 ctx->tx->execSqlAsync(
                     std::string(kCancelReturning),
                     [ctx, bizFail, txFail](const Result &u) mutable {
                         if (u.empty()) return bizFail(drogon::k500InternalServerError, "failed to cancel order");
                         ctx->order = rowToOrder(u, 0);
 
-                        // Nothing to release (avoid ledger CHECK delta!=0)
+                        // Завершает отмену без release-записи, если освобождать уже нечего.
                         if (ctx->releaseAmount <= 0) {
                             ctx->onOk(std::move(ctx->order));
                             return;
                         }
 
                         if (ctx->order.side == "BUY") {
-                            // wallets: reserved -> available
+                            // Возвращает зарезервированные деньги обратно в доступный баланс.
                             ctx->tx->execSqlAsync(
                                 "UPDATE wallets "
                                 "SET available = available + $2, reserved = reserved - $2, updated_at = now() "
@@ -538,7 +549,7 @@ void OrderRepository::cancelOrderWithRelease(const std::string &userId,
                                 ctx->userId,
                                 static_cast<std::int64_t>(ctx->releaseAmount));
                         } else {
-                            // positions: reserved -> available
+                            // Возвращает зарезервированные доли обратно в доступную позицию.
                             ctx->tx->execSqlAsync(
                                 "UPDATE positions "
                                 "SET shares_available = shares_available + $3, shares_reserved = shares_reserved - $3, updated_at = now() "

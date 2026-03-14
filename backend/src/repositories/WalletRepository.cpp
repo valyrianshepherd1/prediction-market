@@ -10,6 +10,7 @@ using TransactionPtr = std::shared_ptr<drogon::orm::Transaction>;
 
 namespace {
 
+// Преобразует строку результата запроса в данные кошелька.
 WalletRow rowToWallet(const Result &r, std::size_t i) {
     WalletRow w;
     w.user_id = r[i]["user_id"].as<std::string>();
@@ -21,8 +22,10 @@ WalletRow rowToWallet(const Result &r, std::size_t i) {
 
 } // namespace
 
+// Инициализирует репозиторий кошелька подключением к базе данных.
 WalletRepository::WalletRepository(DbClientPtr db) : db_(std::move(db)) {}
 
+// Загружает кошелёк пользователя по его идентификатору.
 void WalletRepository::getWalletByUserId(const std::string &userId,
                                         std::function<void(std::optional<WalletRow>)> onOk,
                                         std::function<void(const DrogonDbException &)> onErr) const {
@@ -40,6 +43,7 @@ void WalletRepository::getWalletByUserId(const std::string &userId,
         userId);
 }
 
+// Пополняет кошелёк пользователя и фиксирует это в cash_ledger.
 void WalletRepository::deposit(const std::string &userId,
                               std::int64_t amount,
                               std::function<void(WalletRow)> onOk,
@@ -63,14 +67,15 @@ void WalletRepository::deposit(const std::string &userId,
         std::move(onOk), std::move(onBizErr), std::move(onErr)
     });
 
+    // Запускает транзакцию для пополнения кошелька и записи в ledger.
     db_->newTransactionAsync([ctx](const TransactionPtr &tx) {
         ctx->tx = tx;
 
-        // ensure wallet exists
+        // Гарантирует наличие кошелька перед пополнением.
         tx->execSqlAsync(
             "INSERT INTO wallets(user_id) VALUES($1::uuid) ON CONFLICT DO NOTHING",
             [ctx](const Result &) {
-                // update balance + return wallet
+                // Увеличивает доступный баланс и возвращает обновлённый кошелёк.
                 ctx->tx->execSqlAsync(
                     "UPDATE wallets SET available = available + $2, updated_at = now() "
                     "WHERE user_id = $1::uuid "
@@ -82,7 +87,7 @@ void WalletRepository::deposit(const std::string &userId,
                         }
                         WalletRow w = rowToWallet(r, 0);
 
-                        // ledger entry
+                        // Добавляет запись о пополнении в cash_ledger.
                         ctx->tx->execSqlAsync(
                             "INSERT INTO cash_ledger(user_id, kind, delta_available, delta_reserved, ref_type, ref_id) "
                             "VALUES($1::uuid, 'DEPOSIT', $2, 0, 'ADMIN', gen_random_uuid())",

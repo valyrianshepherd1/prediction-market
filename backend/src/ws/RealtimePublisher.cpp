@@ -1,219 +1,96 @@
 #include "pm/ws/RealtimePublisher.h"
 
-#include "pm/repositories/WalletRepository.h"
-#include "pm/util/JsonSerializers.h"
-#include "pm/ws/WsHub.h"
+#include "pm/ws/MarketRealtimePublisher.h"
+#include "pm/ws/OrderRealtimePublisher.h"
+#include "pm/ws/TradeRealtimePublisher.h"
+#include "pm/ws/WalletRealtimePublisher.h"
 
-#include <drogon/orm/DbClient.h>
-
-#include <json/json.h>
-
-#include <cstdint>
-#include <optional>
-#include <string>
-#include <string_view>
-
-using drogon::orm::DbClientPtr;
-using drogon::orm::DrogonDbException;
-using drogon::orm::Result;
+#include <memory>
+#include <type_traits>
+#include <utility>
+#include <variant>
+#include <vector>
 
 namespace {
-OrderRow rowToOrder(const Result &r, std::size_t i) {
-    OrderRow o;
-    o.id = r[i]["id"].as<std::string>();
-    o.user_id = r[i]["user_id"].as<std::string>();
-    o.outcome_id = r[i]["outcome_id"].as<std::string>();
-    o.side = r[i]["side"].as<std::string>();
-    o.price_bp = r[i]["price_bp"].as<int>();
-    o.qty_total_micros = r[i]["qty_total_micros"].as<std::int64_t>();
-    o.qty_remaining_micros = r[i]["qty_remaining_micros"].as<std::int64_t>();
-    o.status = r[i]["status"].as<std::string>();
-    o.created_at = r[i]["created_at"].as<std::string>();
-    o.updated_at = r[i]["updated_at"].as<std::string>();
-    return o;
-}
 
-void publishOrderbookInvalidate(const OrderRow &order, std::string_view reason) {
-    Json::Value payload;
-    payload["reason"] = std::string(reason);
-    payload["outcome_id"] = order.outcome_id;
-    payload["order_id"] = order.id;
-
-    pm::ws::WsHub::instance().publish(
-        "orderbook:" + order.outcome_id,
-        "orderbook.invalidate",
-        payload);
-}
-
-void publishOrderChanged(const OrderRow &order, std::string_view reason) {
-    Json::Value payload = pm::json::toJson(order);
-    payload["reason"] = std::string(reason);
-
-    pm::ws::WsHub::instance().publish(
-        "user:" + order.user_id,
-        "order.changed",
-        payload);
-}
-
-void publishPositionSnapshot(const DbClientPtr &db,
-                             const std::string &userId,
-                             const std::string &outcomeId) {
-    if (!db || userId.empty() || outcomeId.empty()) {
-        return;
+    [[nodiscard]] pm::ws::RealtimePublishKind requestKind(const pm::ws::RealtimePublishRequest &request) {
+        return std::visit(
+            [](const auto &typedRequest) -> pm::ws::RealtimePublishKind {
+                using T = std::decay_t<decltype(typedRequest)>;
+                if constexpr (std::is_same_v<T, pm::ws::WalletSnapshotRequest>) {
+                    return pm::ws::RealtimePublishKind::WalletSnapshot;
+                } else if constexpr (std::is_same_v<T, pm::ws::OrderLifecycleRequest>) {
+                    return pm::ws::RealtimePublishKind::OrderLifecycle;
+                } else if constexpr (std::is_same_v<T, pm::ws::TradeExecutionRequest>) {
+                    return pm::ws::RealtimePublishKind::TradeExecution;
+                } else {
+                    return pm::ws::RealtimePublishKind::MarketLifecycle;
+                }
+            },
+            request);
     }
 
-    static constexpr std::string_view kSql =
-        "SELECT user_id::text AS user_id, "
-        "outcome_id::text AS outcome_id, "
-        "shares_available, shares_reserved, updated_at::text AS updated_at "
-        "FROM positions "
-        "WHERE user_id = $1::uuid AND outcome_id = $2::uuid";
+    class RealtimePublisherRegistry {
+    public:
+        static RealtimePublisherRegistry &instance() {
+            static RealtimePublisherRegistry registry;
+            return registry;
+        }
 
-    db->execSqlAsync(
-        std::string(kSql),
-        [userId](const Result &r) {
-            if (r.empty()) {
-                return;
+        void publish(const pm::ws::RealtimePublishRequest &request) const {
+            const auto kind = requestKind(request);
+            for (const auto &publisher: publishers_) {
+                if (publisher && publisher->supports(kind)) {
+                    publisher->publish(request);
+                    return;
+                }
             }
+        }
 
-            Json::Value payload;
-            payload["user_id"] = r[0]["user_id"].as<std::string>();
-            payload["outcome_id"] = r[0]["outcome_id"].as<std::string>();
-            payload["shares_available"] = Json::Int64(r[0]["shares_available"].as<std::int64_t>());
-            payload["shares_reserved"] = Json::Int64(r[0]["shares_reserved"].as<std::int64_t>());
-            payload["shares_total"] = Json::Int64(
-                r[0]["shares_available"].as<std::int64_t>() +
-                r[0]["shares_reserved"].as<std::int64_t>());
-            payload["updated_at"] = r[0]["updated_at"].as<std::string>();
+    private:
+        RealtimePublisherRegistry() {
+            publishers_.push_back(std::make_unique<pm::ws::WalletRealtimePublisher>());
+            publishers_.push_back(std::make_unique<pm::ws::OrderRealtimePublisher>());
+            publishers_.push_back(std::make_unique<pm::ws::TradeRealtimePublisher>());
+            publishers_.push_back(std::make_unique<pm::ws::MarketRealtimePublisher>());
+        }
 
-            pm::ws::WsHub::instance().publish(
-                "user:" + userId,
-                "user.position.updated",
-                payload);
-        },
-        [](const DrogonDbException &) {
-            // best effort: realtime notification failure must not break request flow
-        },
-        userId,
-        outcomeId);
-}
+        std::vector<std::unique_ptr<pm::ws::IRealtimePublisher>> publishers_;
+    };
 
-void publishOrderSnapshotById(const DbClientPtr &db,
-                              const std::string &orderId,
-                              std::string_view reason) {
-    if (!db || orderId.empty()) {
-        return;
-    }
-
-    static constexpr std::string_view kSql =
-        "SELECT id::text AS id, user_id::text AS user_id, outcome_id::text AS outcome_id, "
-        "side, price_bp, qty_total_micros, qty_remaining_micros, status, "
-        "created_at::text AS created_at, updated_at::text AS updated_at "
-        "FROM orders WHERE id = $1::uuid";
-
-    db->execSqlAsync(
-        std::string(kSql),
-        [reason = std::string(reason)](const Result &r) {
-            if (r.empty()) {
-                return;
-            }
-            publishOrderChanged(rowToOrder(r, 0), reason);
-        },
-        [](const DrogonDbException &) {
-            // best effort: realtime notification failure must not break request flow
-        },
-        orderId);
-}
-
-void publishPrivateTradeEvent(const TradeRow &trade,
-                              const std::string &userId,
-                              std::string_view role,
-                              const std::string &counterpartyUserId) {
-    if (userId.empty()) {
-        return;
-    }
-
-    Json::Value payload = pm::json::toJson(trade);
-    payload["role"] = std::string(role);
-    payload["counterparty_user_id"] = counterpartyUserId;
-
-    pm::ws::WsHub::instance().publish(
-        "user:" + userId,
-        "user.trade.created",
-        payload);
-}
 } // namespace
 
 namespace pm::ws {
-void publishWalletSnapshot(const DbClientPtr &db,
-                           const std::string &userId) {
-    if (!db || userId.empty()) {
-        return;
+
+    void publishRealtime(const RealtimePublishRequest &request) {
+        RealtimePublisherRegistry::instance().publish(request);
     }
 
-    WalletRepository{db}.getWalletByUserId(
-        userId,
-        [userId](std::optional<WalletRow> wallet) {
-            if (!wallet) {
-                return;
-            }
-
-            WsHub::instance().publish(
-                "user:" + userId,
-                "user.wallet.updated",
-                pm::json::toJson(*wallet));
-        },
-        [](const DrogonDbException &) {
-            // best effort: realtime notification failure must not break request flow
-        });
-}
-
-void publishOrderLifecycle(const DbClientPtr &db,
-                           const OrderRow &order,
-                           std::string_view reason) {
-    publishOrderbookInvalidate(order, reason);
-    publishOrderChanged(order, reason);
-
-    if (!db) {
-        return;
+    void publishWalletSnapshot(const drogon::orm::DbClientPtr &db,
+                               const std::string &userId) {
+        publishRealtime(WalletSnapshotRequest{db, userId});
     }
 
-    if (order.side == "BUY") {
-        publishWalletSnapshot(db, order.user_id);
-    } else if (order.side == "SELL") {
-        publishPositionSnapshot(db, order.user_id, order.outcome_id);
-    }
-}
-
-void publishTradeExecution(const DbClientPtr &db,
-                           const TradeRow &trade) {
-    WsHub::instance().publish(
-        "trades:" + trade.outcome_id,
-        "trade.created",
-        pm::json::toJson(trade));
-
-    publishPrivateTradeEvent(trade, trade.maker_user_id, "maker", trade.taker_user_id);
-    if (trade.taker_user_id != trade.maker_user_id) {
-        publishPrivateTradeEvent(trade, trade.taker_user_id, "taker", trade.maker_user_id);
+    void publishOrderLifecycle(const drogon::orm::DbClientPtr &db,
+                               const OrderRow &order,
+                               std::string_view reason) {
+        publishRealtime(OrderLifecycleRequest{db, order, std::string(reason)});
     }
 
-    if (!db) {
-        return;
+    void publishTradeExecution(const drogon::orm::DbClientPtr &db,
+                               const TradeRow &trade) {
+        publishRealtime(TradeExecutionRequest{db, trade});
     }
 
-    publishOrderSnapshotById(db, trade.maker_order_id, "matched");
-    if (trade.taker_order_id != trade.maker_order_id) {
-        publishOrderSnapshotById(db, trade.taker_order_id, "matched");
+    void publishMarketLifecycle(const MarketRow &market,
+                                std::string_view reason) {
+        publishRealtime(MarketLifecycleRequest{market, std::nullopt, std::string(reason)});
     }
 
-    publishWalletSnapshot(db, trade.maker_user_id);
-    if (trade.taker_user_id != trade.maker_user_id) {
-        publishWalletSnapshot(db, trade.taker_user_id);
+    void publishMarketLifecycle(const MarketRow &market,
+                                const std::vector<OutcomeRow> &outcomes,
+                                std::string_view reason) {
+        publishRealtime(MarketLifecycleRequest{market, std::optional<std::vector<OutcomeRow>>{outcomes}, std::string(reason)});
     }
 
-    publishPositionSnapshot(db, trade.maker_user_id, trade.outcome_id);
-    if (trade.taker_user_id != trade.maker_user_id) {
-        publishPositionSnapshot(db, trade.taker_user_id, trade.outcome_id);
-    }
-}
 } // namespace pm::ws

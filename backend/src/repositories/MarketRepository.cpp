@@ -14,6 +14,7 @@ struct WinnerRow {
     std::int64_t payout_micros{};
 };
 
+// Преобразует строку результата запроса в данные рынка.
 static MarketRow rowToMarket(const Result &r, size_t i = 0) {
     MarketRow m;
     const auto &row = r[i];
@@ -32,6 +33,7 @@ static MarketRow rowToMarket(const Result &r, size_t i = 0) {
     return m;
 }
 
+// Преобразует строку результата запроса в данные исхода рынка.
 static OutcomeRow rowToOutcome(const Result &r, size_t i = 0) {
     OutcomeRow o;
     const auto &row = r[i];
@@ -42,6 +44,7 @@ static OutcomeRow rowToOutcome(const Result &r, size_t i = 0) {
     return o;
 }
 
+// Преобразует набор строк в список победителей для выплаты.
 static std::vector<WinnerRow> rowsToWinners(const Result &r) {
     std::vector<WinnerRow> out;
     out.reserve(r.size());
@@ -56,9 +59,11 @@ static std::vector<WinnerRow> rowsToWinners(const Result &r) {
 }
 }  // namespace
 
+// Инициализирует репозиторий рынков подключением к базе данных.
 MarketRepository::MarketRepository(drogon::orm::DbClientPtr db) : db_(std::move(db)) {
 }
 
+// Возвращает список рынков с необязательной фильтрацией по статусу.
 void MarketRepository::listMarkets(
     std::optional<std::string> status,
     int limit,
@@ -127,6 +132,7 @@ void MarketRepository::listMarkets(
         off);
 }
 
+// Загружает рынок по его идентификатору.
 void MarketRepository::getMarketById(
     const std::string &id,
     std::function<void(std::optional<MarketRow>)> onOk,
@@ -156,6 +162,7 @@ void MarketRepository::getMarketById(
         id);
 }
 
+// Создаёт новый рынок без исходов.
 void MarketRepository::createMarket(
     const std::string &question,
     std::function<void(MarketRow)> onOk,
@@ -177,6 +184,7 @@ void MarketRepository::createMarket(
         question);
 }
 
+// Возвращает все исходы выбранного рынка.
 void MarketRepository::listOutcomesByMarketId(
     const std::string &marketId,
     std::function<void(std::vector<OutcomeRow>)> onOk,
@@ -205,6 +213,7 @@ void MarketRepository::listOutcomesByMarketId(
         marketId);
 }
 
+// Создаёт рынок и последовательно добавляет к нему исходы в одной транзакции.
 void MarketRepository::createMarketWithOutcomes(
     const std::string &question,
     const std::vector<std::string> &outcomeTitles,
@@ -224,6 +233,7 @@ void MarketRepository::createMarketWithOutcomes(
     st->onErr = std::move(onErr);
     st->titles = outcomeTitles;
 
+    // Запускает транзакцию для атомарного создания рынка и его исходов.
     db_->newTransactionAsync([st, question](const TransactionPtr &tx) {
         st->tx = tx;
 
@@ -237,6 +247,7 @@ void MarketRepository::createMarketWithOutcomes(
             " NULL::text AS resolved_outcome_id, "
             " created_at::text AS created_at;";
 
+        // Создаёт рынок и возвращает его данные.
         tx->execSqlAsync(
             insertMarketSql,
             [st](const Result &r) mutable {
@@ -269,6 +280,7 @@ void MarketRepository::createMarketWithOutcomes(
                         " title, "
                         " outcome_index;";
 
+                    // Добавляет очередной исход для созданного рынка.
                     st->tx->execSqlAsync(
                         insertOutcomeSql,
                         [st, insertNext, i](const Result &r2) mutable {
@@ -288,6 +300,7 @@ void MarketRepository::createMarketWithOutcomes(
     });
 }
 
+// Обновляет вопрос и/или статус рынка.
 void MarketRepository::updateMarket(
     const std::string &marketId,
     std::optional<std::string> question,
@@ -390,6 +403,7 @@ void MarketRepository::updateMarket(
     onOk(std::nullopt);
 }
 
+// Разрешает рынок, начисляет выплаты победителям и фиксирует settlement-записи.
 void MarketRepository::resolveMarket(
     const std::string &marketId,
     const std::string &winningOutcomeId,
@@ -419,6 +433,7 @@ void MarketRepository::resolveMarket(
         st->onErr(e);
     };
 
+    // Запускает транзакцию для разрешения рынка и расчёта выплат.
     db_->newTransactionAsync([st, resolvedByUserId, fail](const TransactionPtr &tx) {
         st->tx = tx;
 
@@ -428,6 +443,7 @@ void MarketRepository::resolveMarket(
             "WHERE id = $1::uuid "
             "FOR UPDATE;";
 
+        // Блокирует строку рынка, чтобы исключить конкурентное разрешение.
         tx->execSqlAsync(
             lockSql,
             [st, resolvedByUserId, fail](const Result &) mutable {
@@ -436,6 +452,7 @@ void MarketRepository::resolveMarket(
                     "resolved_by_user_id) "
                     "VALUES ($1::uuid, $2::uuid, $3::uuid);";
 
+                // Сохраняет выбранный победивший исход в таблице резолюций.
                 st->tx->execSqlAsync(
                     insResolutionSql,
                     [st, fail](const Result &) mutable {
@@ -451,6 +468,7 @@ void MarketRepository::resolveMarket(
                             " $2::text AS resolved_outcome_id, "
                             " created_at::text AS created_at;";
 
+                        // Помечает рынок как RESOLVED и возвращает обновлённую запись.
                         st->tx->execSqlAsync(
                             updateMarketSql,
                             [st, fail](const Result &r3) mutable {
@@ -465,6 +483,7 @@ void MarketRepository::resolveMarket(
                                     "  AND (p.shares_available + p.shares_reserved) > 0 "
                                     "FOR UPDATE;";
 
+                                // Загружает победителей и размеры их выплат по выигравшему исходу.
                                 st->tx->execSqlAsync(
                                     winnersSql,
                                     [st, fail](const Result &r4) mutable {
@@ -479,7 +498,7 @@ void MarketRepository::resolveMarket(
                                             if (i >= st->winners.size()) {
                                                 auto updated = std::move(st->updatedMarket);
                                                 st->applyNext.reset();
-                                                st->tx.reset();  // commit before success callback
+                                                st->tx.reset();  // Фиксирует транзакцию перед вызовом успешного колбэка
                                                 st->onOk(std::move(updated));
                                                 return;
                                             }
@@ -497,6 +516,7 @@ void MarketRepository::resolveMarket(
                                                 "VALUES ($1::uuid, 0, 0) "
                                                 "ON CONFLICT (user_id) DO NOTHING;";
 
+                                            // Гарантирует наличие кошелька у текущего победителя.
                                             st->tx->execSqlAsync(
                                                 ensureWalletSql,
                                                 [st, weakApplyNext, i, winner, fail](
@@ -507,6 +527,7 @@ void MarketRepository::resolveMarket(
                                                         "    updated_at = now() "
                                                         "WHERE user_id = $1::uuid;";
 
+                                                    // Начисляет выигрыш на доступный баланс кошелька победителя.
                                                     st->tx->execSqlAsync(
                                                         walletSql,
                                                         [st, weakApplyNext, i, winner, fail](
@@ -520,6 +541,7 @@ void MarketRepository::resolveMarket(
                                                                 "'MARKET', $3::uuid) "
                                                                 "RETURNING id::text AS id;";
 
+                                                            // Создаёт запись cash_ledger для выплаты по рынку.
                                                             st->tx->execSqlAsync(
                                                                 ledgerSql,
                                                                 [st,
@@ -542,6 +564,7 @@ void MarketRepository::resolveMarket(
                                                                             "$3::uuid, $4::bigint, "
                                                                             "$5::uuid);";
 
+                                                                    // Фиксирует settlement, связывающий выплату и рынок.
                                                                     st->tx->execSqlAsync(
                                                                         settlementSql,
                                                                         [weakApplyNext, i](
@@ -591,6 +614,7 @@ void MarketRepository::resolveMarket(
     });
 }
 
+// Переводит рынок в архивный статус.
 void MarketRepository::archiveMarket(
     const std::string &marketId,
     std::function<void(MarketRow)> onOk,

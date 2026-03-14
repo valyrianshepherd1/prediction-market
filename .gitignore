@@ -83,3 +83,4 @@ Thumbs.db
 scripts/check_all.sh
 .pm_check_backend.log
 scripts/fill_database.sh
+scripts/fill_database_showcase.sh

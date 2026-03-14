@@ -148,7 +148,7 @@ void WalletController::adminDeposit(
                 userId,
                 amount,
                 [cbp, db](WalletRow w) {
-                    pm::ws::publishWalletSnapshot(db, w.user_id);
+                    pm::ws::publishRealtime(pm::ws::WalletSnapshotRequest{db, w.user_id});
 
                     auto resp = HttpResponse::newHttpJsonResponse(pm::json::toJson(w));
                     resp->setStatusCode(drogon::k200OK);

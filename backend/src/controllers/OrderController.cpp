@@ -62,14 +62,14 @@ void OrderController::createOrder(const drogon::HttpRequestPtr &req,
             svc.createOrder(
                 principal.user_id, outcomeId, side, priceBp, qtyMicros,
                 [cbp, db](OrderRow created) {
-                    pm::ws::publishOrderLifecycle(db, created, "order_created");
+                    pm::ws::publishRealtime(pm::ws::OrderLifecycleRequest{db, created, "order_created"});
 
                     TradeService tradeSvc{TradeRepository{db}};
                     tradeSvc.listTradesForOrder(
                         created.id,
                         [db](std::vector<TradeRow> trades) {
                             for (const auto &trade: trades) {
-                                pm::ws::publishTradeExecution(db, trade);
+                                pm::ws::publishRealtime(pm::ws::TradeExecutionRequest{db, trade});
                             }
                         },
                         [](const drogon::orm::DrogonDbException &) {
@@ -204,7 +204,7 @@ void OrderController::cancelOrder(const drogon::HttpRequestPtr &req,
             svc.cancelOrderForUser(
                 principal.user_id, orderId,
                 [cbp, db](OrderRow o) {
-                    pm::ws::publishOrderLifecycle(db, o, "order_canceled");
+                    pm::ws::publishRealtime(pm::ws::OrderLifecycleRequest{db, o, "order_canceled"});
                     (*cbp)(HttpResponse::newHttpJsonResponse(pm::json::toJson(o)));
                 },
                 [cbp](const pm::ApiError &e) {

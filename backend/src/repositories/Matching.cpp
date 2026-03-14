@@ -24,6 +24,7 @@ struct MakerRow {
     std::int64_t qty_remaining_micros{};
 };
 
+// Преобразует строку результата запроса в данные maker-ордера.
 MakerRow rowToMaker(const Result &r, std::size_t i) {
     MakerRow m;
     m.id = r[i]["id"].as<std::string>();
@@ -33,8 +34,8 @@ MakerRow rowToMaker(const Result &r, std::size_t i) {
     return m;
 }
 
-// ceil(qty * price_bp / 10000)
-    std::int64_t ceilCost(std::int64_t qtyMicros, int priceBp) {
+// Считает стоимость сделки вверх с округлением до целого микро-значения.
+std::int64_t ceilCost(std::int64_t qtyMicros, int priceBp) {
     if (qtyMicros <= 0 || priceBp <= 0) {
         return 0;
     }
@@ -60,6 +61,7 @@ MakerRow rowToMaker(const Result &r, std::size_t i) {
     return wholePart + fractionalPart;
 }
 
+// Сериализует JSON-объект в компактную строку для outbox-события.
 std::string jsonToString(const Json::Value &v) {
     Json::StreamWriterBuilder b;
     b["indentation"] = "";
@@ -68,6 +70,7 @@ std::string jsonToString(const Json::Value &v) {
 
 } // namespace
 
+// Матчит taker-ордер с лучшими встречными ордерами внутри текущей транзакции.
 void matchTakerOrderInTx(const TransactionPtr &tx,
                          const std::string &takerOrderId,
                          const std::string &takerUserId,
@@ -101,7 +104,7 @@ void matchTakerOrderInTx(const TransactionPtr &tx,
         std::move(onDone), std::move(onErr), std::move(onBizErr), {}
     });
 
-    // 0) Lock taker order and read its remaining
+    // Блокирует taker-ордер и считывает его оставшийся объём.
     ctx->tx->execSqlAsync(
         "SELECT qty_remaining_micros "
         "FROM orders WHERE id = $1::uuid FOR UPDATE",
@@ -120,7 +123,7 @@ void matchTakerOrderInTx(const TransactionPtr &tx,
 
                 const bool takerIsBuy = (ctx->takerSide == "BUY");
 
-                // 1) pick best maker on opposite side (price-time), lock it
+                // Выбирает лучший встречный maker-ордер по price-time приоритету и блокирует его.
                 std::string sqlMaker;
                 if (takerIsBuy) {
                     sqlMaker =
@@ -155,7 +158,7 @@ void matchTakerOrderInTx(const TransactionPtr &tx,
                         const std::int64_t qty = std::min<std::int64_t>(ctx->takerRemaining, maker.qty_remaining_micros);
                         const int tradePriceBp = maker.price_bp; // maker price
 
-                        // Buyer/Seller resolution:
+                        // Определяет покупателя и продавца для текущего сопоставления.
                         const std::string buyerUserId = (ctx->takerSide == "BUY") ? ctx->takerUserId : maker.user_id;
                         const std::string sellerUserId = (ctx->takerSide == "BUY") ? maker.user_id : ctx->takerUserId;
 
@@ -165,7 +168,7 @@ void matchTakerOrderInTx(const TransactionPtr &tx,
                         const std::int64_t buyerReservedUsed = ceilCost(qty, buyerOrderPriceBp);
                         const std::int64_t refund = (buyerReservedUsed > cost) ? (buyerReservedUsed - cost) : 0;
 
-                        // 2) insert trade
+                        // Создаёт запись сделки в таблице trades.
                         ctx->tx->execSqlAsync(
                             "INSERT INTO trades(outcome_id, maker_user_id, taker_user_id, maker_order_id, taker_order_id, price_bp, qty_micros) "
                             "VALUES($1::uuid,$2::uuid,$3::uuid,$4::uuid,$5::uuid,$6,$7) "
@@ -174,7 +177,7 @@ void matchTakerOrderInTx(const TransactionPtr &tx,
                                 if (tr.empty()) return ctx->onBizErr(drogon::k500InternalServerError, "failed to insert trade");
                                 const std::string tradeId = tr[0]["id"].as<std::string>();
 
-                                // 3) update maker order remaining/status
+                                // Обновляет остаток и статус maker-ордера после сделки.
                                 ctx->tx->execSqlAsync(
                                     "UPDATE orders SET "
                                     " qty_remaining_micros = qty_remaining_micros - $2, "
@@ -185,7 +188,7 @@ void matchTakerOrderInTx(const TransactionPtr &tx,
                                         if (u1.affectedRows() != 1)
                                             return ctx->onBizErr(drogon::k500InternalServerError, "maker order update failed");
 
-                                        // 4) update taker order remaining/status
+                                        // Обновляет остаток и статус taker-ордера после сделки.
                                         ctx->tx->execSqlAsync(
                                             "UPDATE orders SET "
                                             " qty_remaining_micros = qty_remaining_micros - $2, "
@@ -199,19 +202,19 @@ void matchTakerOrderInTx(const TransactionPtr &tx,
                                                 if (u2.affectedRows() != 1)
                                                     return ctx->onBizErr(drogon::k500InternalServerError, "taker order update failed");
 
-                                                // 5) Ensure wallets exist (both)
+                                                // Гарантирует наличие кошельков у обеих сторон сделки.
                                                 ctx->tx->execSqlAsync(
                                                     "INSERT INTO wallets(user_id) VALUES($1::uuid), ($2::uuid) ON CONFLICT DO NOTHING",
                                                     [ctx, maker, qty, tradePriceBp, buyerUserId, sellerUserId, cost, buyerReservedUsed, refund, tradeId](const Result &) mutable {
 
-                                                        // 6) Ensure positions exist (both)
+                                                        // Гарантирует наличие позиций у покупателя и продавца по этому исходу.
                                                         ctx->tx->execSqlAsync(
                                                             "INSERT INTO positions(user_id, outcome_id) "
                                                             "VALUES($1::uuid,$3::uuid), ($2::uuid,$3::uuid) "
                                                             "ON CONFLICT DO NOTHING",
                                                             [ctx, maker, qty, tradePriceBp, buyerUserId, sellerUserId, cost, buyerReservedUsed, refund, tradeId](const Result &) mutable {
 
-                                                                // 7) Buyer wallet: reserved -= buyerReservedUsed; available += refund
+                                                                // Списывает резерв покупателя и сразу возвращает возможную переплату.
                                                                 ctx->tx->execSqlAsync(
                                                                     "UPDATE wallets SET reserved = reserved - $2, available = available + $3, updated_at = now() "
                                                                     "WHERE user_id = $1::uuid AND reserved >= $2",
@@ -219,15 +222,15 @@ void matchTakerOrderInTx(const TransactionPtr &tx,
                                                                         if (wb.affectedRows() != 1)
                                                                             return ctx->onBizErr(drogon::k500InternalServerError, "buyer wallet update failed");
 
-                                                                        // cash_ledger buyer: TRADE_DEBIT (cost from reserved)
+                                                                        // Пишет в cash_ledger списание стоимости сделки из резерва покупателя.
                                                                         ctx->tx->execSqlAsync(
                                                                             "INSERT INTO cash_ledger(user_id, kind, delta_available, delta_reserved, ref_type, ref_id) "
                                                                             "VALUES($1::uuid, 'TRADE_DEBIT', 0, $2, 'TRADE', $3::uuid)",
                                                                             [ctx, maker, qty, tradePriceBp, buyerUserId, sellerUserId, cost, buyerReservedUsed, refund, tradeId](const Result &) mutable {
 
-                                                                                // optional refund ledger
+                                                                                // При необходимости пишет отдельную ledger-запись на возврат переплаты.
                                                                                 auto afterRefund = [ctx, maker, qty, tradePriceBp, buyerUserId, sellerUserId, cost, tradeId]() mutable {
-                                                                                    // 8) Buyer gets shares_available += qty
+                                                                                    // Начисляет покупателю купленные доли в доступный баланс.
                                                                                     ctx->tx->execSqlAsync(
                                                                                         "UPDATE positions SET shares_available = shares_available + $3, updated_at = now() "
                                                                                         "WHERE user_id=$1::uuid AND outcome_id=$2::uuid",
@@ -240,7 +243,7 @@ void matchTakerOrderInTx(const TransactionPtr &tx,
                                                                                                 "VALUES($1::uuid, $2::uuid, 'TRADE_CREDIT', $3, 0, 'TRADE', $4::uuid)",
                                                                                                 [ctx, maker, qty, tradePriceBp, buyerUserId, sellerUserId, cost, tradeId](const Result &) mutable {
 
-                                                                                                    // 9) Seller shares_reserved -= qty
+                                                                                                    // Списывает у продавца проданные доли из резерва.
                                                                                                     ctx->tx->execSqlAsync(
                                                                                                         "UPDATE positions SET shares_reserved = shares_reserved - $3, updated_at = now() "
                                                                                                         "WHERE user_id=$1::uuid AND outcome_id=$2::uuid AND shares_reserved >= $3",
@@ -253,7 +256,7 @@ void matchTakerOrderInTx(const TransactionPtr &tx,
                                                                                                                 "VALUES($1::uuid, $2::uuid, 'TRADE_DEBIT', 0, $3, 'TRADE', $4::uuid)",
                                                                                                                 [ctx, maker, qty, tradePriceBp, buyerUserId, sellerUserId, cost, tradeId](const Result &) mutable {
 
-                                                                                                                    // 10) Seller wallet available += cost
+                                                                                                                    // Начисляет продавцу выручку на доступный баланс кошелька.
                                                                                                                     ctx->tx->execSqlAsync(
                                                                                                                         "UPDATE wallets SET available = available + $2, updated_at = now() WHERE user_id = $1::uuid",
                                                                                                                         [ctx, maker, qty, tradePriceBp, buyerUserId, sellerUserId, cost, tradeId](const Result &ws) mutable {
@@ -265,7 +268,7 @@ void matchTakerOrderInTx(const TransactionPtr &tx,
                                                                                                                                 "VALUES($1::uuid, 'TRADE_CREDIT', $2, 0, 'TRADE', $3::uuid)",
                                                                                                                                 [ctx, maker, qty, tradePriceBp, cost, tradeId](const Result &) mutable {
 
-                                                                                                                                    // 11) outbox event (trade.created)
+                                                                                                                                    // Формирует outbox-событие trade.created для дальнейшей публикации.
                                                                                                                                     Json::Value payload;
                                                                                                                                     payload["trade_id"] = tradeId;
                                                                                                                                     payload["outcome_id"] = ctx->outcomeId;

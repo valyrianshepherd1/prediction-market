@@ -1,8 +1,7 @@
 #include "pm/ws/MarketRealtimePublisher.h"
 
-#include "pm/ws/WsHub.h"
-
 #include "pm/util/JsonSerializers.h"
+#include "pm/ws/WsHub.h"
 
 #include <json/json.h>
 
@@ -65,33 +64,35 @@ namespace {
             "markets.invalidate",
             payload);
     }
-}
+
+} // namespace
 
 namespace pm::ws {
-    void publishMarketLifecycle(const MarketRow &market,
-                                std::string_view reason) {
-        WsHub::instance().publish(
-            "market:" + market.id,
-            "market.updated",
-            makeMarketPayload(market, reason));
 
-        publishMarketsInvalidate(market, reason);
+    bool MarketRealtimePublisher::supports(RealtimePublishKind kind) const noexcept {
+        return kind == RealtimePublishKind::MarketLifecycle;
     }
 
-    void publishMarketLifecycle(const MarketRow &market,
-                                const std::vector<OutcomeRow> &outcomes,
-                                std::string_view reason) {
-        Json::Value payload = makeMarketPayload(market, reason);
-        payload["outcomes"] = Json::arrayValue;
-        for (const auto &outcome: outcomes) {
-            payload["outcomes"].append(pm::json::toJson(outcome));
+    void MarketRealtimePublisher::publish(const RealtimePublishRequest &request) const {
+        const auto *marketRequest = std::get_if<MarketLifecycleRequest>(&request);
+        if (!marketRequest) {
+            return;
+        }
+
+        Json::Value payload = makeMarketPayload(marketRequest->market, marketRequest->reason);
+        if (marketRequest->outcomes.has_value()) {
+            payload["outcomes"] = Json::arrayValue;
+            for (const auto &outcome: *marketRequest->outcomes) {
+                payload["outcomes"].append(pm::json::toJson(outcome));
+            }
         }
 
         WsHub::instance().publish(
-            "market:" + market.id,
+            "market:" + marketRequest->market.id,
             "market.updated",
             payload);
 
-        publishMarketsInvalidate(market, reason);
+        publishMarketsInvalidate(marketRequest->market, marketRequest->reason);
     }
+
 } // namespace pm::ws

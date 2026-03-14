@@ -5,6 +5,7 @@ using drogon::orm::Result;
 
 namespace {
 
+// Преобразует строку результата запроса в данные позиции портфеля.
 PortfolioPositionRow rowToPosition(const Result &r, std::size_t i) {
     PortfolioPositionRow p;
     p.user_id = r[i]["user_id"].as<std::string>();
@@ -19,6 +20,7 @@ PortfolioPositionRow rowToPosition(const Result &r, std::size_t i) {
     return p;
 }
 
+// Преобразует строку результата запроса в запись ledger портфеля.
 PortfolioLedgerEntryRow rowToLedgerEntry(const Result &r, std::size_t i) {
     PortfolioLedgerEntryRow e;
     e.id = r[i]["id"].as<std::string>();
@@ -37,8 +39,10 @@ PortfolioLedgerEntryRow rowToLedgerEntry(const Result &r, std::size_t i) {
 
 }  // namespace
 
+// Инициализирует репозиторий портфеля подключением к базе данных.
 PortfolioRepository::PortfolioRepository(DbClientPtr db) : db_(std::move(db)) {}
 
+// Возвращает открытые позиции пользователя по рынкам и исходам.
 void PortfolioRepository::listPositionsForUser(
     const std::string &userId,
     int limit,
@@ -90,6 +94,7 @@ void PortfolioRepository::listPositionsForUser(
         offset);
 }
 
+// Возвращает объединённую историю cash и shares ledger пользователя.
 void PortfolioRepository::listLedgerForUser(
     const std::string &userId,
     int limit,

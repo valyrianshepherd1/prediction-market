@@ -9,6 +9,7 @@ using drogon::orm::Result;
 using TransactionPtr = std::shared_ptr<drogon::orm::Transaction>;
 
 namespace {
+// Преобразует строку результата запроса в данные пользователя.
 AuthUserRow rowToUser(const Result &r, std::size_t i = 0) {
     AuthUserRow u;
     const auto &row = r[i];
@@ -20,6 +21,7 @@ AuthUserRow rowToUser(const Result &r, std::size_t i = 0) {
     return u;
 }
 
+// Преобразует строку результата запроса в данные сессии пользователя.
 AuthSessionRow rowToSession(const Result &r, std::size_t i = 0) {
     AuthSessionRow s;
     const auto &row = r[i];
@@ -68,6 +70,7 @@ AuthSessionRow rowToSession(const Result &r, std::size_t i = 0) {
     return s;
 }
 
+// Возвращает SQL для создания сессии и выдачи новых токенов.
 const std::string &createSessionSql() {
     static const std::string sql =
         "WITH tok AS ("
@@ -101,9 +104,11 @@ const std::string &createSessionSql() {
 }
 }  // namespace
 
+// Инициализирует репозиторий авторизации подключением к базе данных.
 AuthRepository::AuthRepository(DbClientPtr db) : db_(std::move(db)) {
 }
 
+// Регистрирует пользователя, создаёт кошелёк и открывает первую сессию.
 void AuthRepository::registerUser(const std::string &email,
                                   const std::string &username,
                                   const std::string &password,
@@ -133,6 +138,7 @@ void AuthRepository::registerUser(const std::string &email,
     ctx->refreshTtlDays = refreshTtlDays;
     ctx->accessTtlMinutes = accessTtlMinutes;
 
+    // Запускает транзакцию для атомарной регистрации пользователя.
     db_->newTransactionAsync([ctx, email, username, password](const TransactionPtr &tx) {
         ctx->tx = tx;
 
@@ -142,6 +148,7 @@ void AuthRepository::registerUser(const std::string &email,
             "ON CONFLICT DO NOTHING "
             "RETURNING id::text AS id, email, username, role, created_at::text AS created_at;";
 
+        // Создаёт пользователя в таблице users и возвращает его данные.
         tx->execSqlAsync(
             insertUserSql,
             [ctx](const Result &r) mutable {
@@ -154,9 +161,11 @@ void AuthRepository::registerUser(const std::string &email,
                 static const std::string insertWalletSql =
                     "INSERT INTO wallets(user_id) VALUES($1::uuid) ON CONFLICT DO NOTHING;";
 
+                // Создаёт кошелёк пользователя, если он ещё не существует.
                 ctx->tx->execSqlAsync(
                     insertWalletSql,
                     [ctx](const Result &) mutable {
+                        // Создаёт сессию и генерирует пару токенов доступа и обновления.
                         ctx->tx->execSqlAsync(
                             createSessionSql(),
                             [ctx](const Result &r2) mutable {
@@ -188,6 +197,7 @@ void AuthRepository::registerUser(const std::string &email,
     });
 }
 
+// Авторизует пользователя по логину и паролю и создаёт новую сессию.
 void AuthRepository::login(const std::string &login,
                            const std::string &password,
                            int accessTtlMinutes,
@@ -222,6 +232,7 @@ void AuthRepository::login(const std::string &login,
         "  AND password_hash = crypt($2::text, password_hash) "
         "LIMIT 1;";
 
+    // Ищет пользователя по email или username и проверяет пароль.
     db_->execSqlAsync(
         findUserSql,
         [this, ctx](const Result &r) mutable {
@@ -231,6 +242,7 @@ void AuthRepository::login(const std::string &login,
 
             ctx->user = rowToUser(r, 0);
 
+            // Создаёт новую сессию для успешно аутентифицированного пользователя.
             db_->execSqlAsync(
                 createSessionSql(),
                 [ctx](const Result &r2) mutable {
@@ -255,6 +267,7 @@ void AuthRepository::login(const std::string &login,
         password);
 }
 
+// Обновляет токены доступа и обновления по действующему refresh-токену.
 void AuthRepository::refresh(const std::string &refreshToken,
                              int accessTtlMinutes,
                              int refreshTtlDays,
@@ -309,6 +322,7 @@ void AuthRepository::refresh(const std::string &refreshToken,
         accessTtlMinutes);
 }
 
+// Проверяет токен доступа и загружает связанную сессию пользователя.
 void AuthRepository::authenticateAccessToken(const std::string &accessToken,
                                              std::function<void(AuthSessionRow)> onOk,
                                              std::function<void(const pm::ApiError &)> onBizErr,
@@ -339,6 +353,7 @@ void AuthRepository::authenticateAccessToken(const std::string &accessToken,
         accessToken);
 }
 
+// Завершает сессию по refresh-токену.
 void AuthRepository::logout(const std::string &refreshToken,
                             std::function<void()> onOk,
                             std::function<void(const DrogonDbException &)> onErr) const {

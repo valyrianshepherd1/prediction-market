@@ -4,7 +4,7 @@
 
 namespace pm::ws {
 
-    class MarketRealtimePublisher final : public IRealtimePublisher {
+    class OrderRealtimePublisher final : public IRealtimePublisher {
     public:
         [[nodiscard]] bool supports(RealtimePublishKind kind) const noexcept override;
         void publish(const RealtimePublishRequest &request) const override;

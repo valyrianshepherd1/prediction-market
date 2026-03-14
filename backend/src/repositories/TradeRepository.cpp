@@ -6,6 +6,7 @@ using drogon::orm::Result;
 
 namespace {
 
+// Преобразует строку результата запроса в данные сделки.
 TradeRow rowToTrade(const Result &r, std::size_t i) {
     TradeRow t;
     t.id = r[i]["id"].as<std::string>();
@@ -22,8 +23,10 @@ TradeRow rowToTrade(const Result &r, std::size_t i) {
 
 } // namespace
 
+// Инициализирует репозиторий сделок подключением к базе данных.
 TradeRepository::TradeRepository(DbClientPtr db) : db_(std::move(db)) {}
 
+// Возвращает список сделок по выбранному исходу.
 void TradeRepository::listByOutcome(const std::string &outcomeId, int limit, int offset,
                                     std::function<void(std::vector<TradeRow>)> onOk,
                                     std::function<void(const DrogonDbException &)> onErr) const {
@@ -51,6 +54,7 @@ void TradeRepository::listByOutcome(const std::string &outcomeId, int limit, int
         outcomeId, limit, offset);
 }
 
+// Возвращает список сделок, где пользователь был maker или taker.
 void TradeRepository::listByUser(const std::string &userId, int limit, int offset,
                                  std::function<void(std::vector<TradeRow>)> onOk,
                                  std::function<void(const DrogonDbException &)> onErr) const {
@@ -78,6 +82,7 @@ void TradeRepository::listByUser(const std::string &userId, int limit, int offse
         userId, limit, offset);
 }
 
+// Возвращает все сделки, связанные с конкретным ордером.
 void TradeRepository::listByOrder(const std::string &orderId,
                                   std::function<void(std::vector<TradeRow>)> onOk,
                                   std::function<void(const DrogonDbException &)> onErr) const {
